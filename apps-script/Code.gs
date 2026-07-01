@@ -2,12 +2,14 @@
 //
 // Required Script Properties (Project Settings -> Script Properties):
 //   SHEET_ID       the target spreadsheet's ID (from its URL)
+//   APP_PASSWORD   the shared password the frontend must send
 //   SHEET_NAME     (optional) worksheet tab name, defaults to "medicines"
 //
 // Deploy: Deploy -> New deployment -> Web app
 //   Execute as:      Me
 //   Who has access:  Anyone
-// The /exec URL is your shared secret — don't commit it to a public repo.
+// The APP_PASSWORD is what actually gates access. Every action goes through
+// POST so the password stays out of URLs / server logs.
 
 const HEADERS = [
   "id", "name", "type", "strength", "dosage",
@@ -15,16 +17,14 @@ const HEADERS = [
 ];
 
 function doGet(e) {
-  return handle_(function () {
-    var action = (e && e.parameter && e.parameter.action) || "list";
-    if (action === "list") return { medicines: readAll_() };
-    throw new Error("Unknown action: " + action);
-  });
+  return json_({ error: "Use POST" });
 }
 
 function doPost(e) {
   return handle_(function () {
     var body = JSON.parse(e.postData.contents || "{}");
+    assertPassword_(body.password);
+    if (body.action === "list") return { medicines: readAll_() };
     if (body.action === "replace") {
       replaceAll_(body.medicines || []);
       return { ok: true, count: body.medicines.length };
@@ -45,6 +45,12 @@ function json_(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+function assertPassword_(supplied) {
+  var expected = PropertiesService.getScriptProperties().getProperty("APP_PASSWORD");
+  if (!expected) throw new Error("Server not configured: APP_PASSWORD missing");
+  if (!supplied || supplied !== expected) throw new Error("Unauthorized");
 }
 
 function sheet_() {

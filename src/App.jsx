@@ -1,5 +1,10 @@
+import PasswordGate from "./PasswordGate.jsx";
 import MedicineCabinet from "./MedicineCabinet.jsx";
 
 export default function App() {
-  return <MedicineCabinet />;
+  return (
+    <PasswordGate>
+      <MedicineCabinet />
+    </PasswordGate>
+  );
 }
