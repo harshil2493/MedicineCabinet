@@ -10,9 +10,13 @@ function lowThresholdFor(type, settings) {
 }
 
 const EXPORT_COLUMNS = [
-  "name", "type", "strength", "dosage", "quantity",
+  "name", "type", "strength", "dosage", "quantity", "volumeMl",
   "condition", "description", "expiryDate",
 ];
+
+function isLiquidType(t) {
+  return t && t !== "drug";
+}
 
 function toCSV(rows) {
   const escape = (v) => {
@@ -54,6 +58,7 @@ function makeEmpty() {
     strength: "",
     dosage: "",
     quantity: "10",
+    volumeMl: "",
     condition: "",
     description: "",
     expiryDate: `${y}-${m}`,
@@ -114,33 +119,35 @@ function groupKey(m) {
   return norm(m.name) + "|" + (m.type || "drug") + "|" + norm(m.strength);
 }
 
-// Accepts "YYYY-MM" (treated as end of that month — matches how medicine
-// packaging works: "Exp 08/2026" means safe through August 31) or legacy
-// "YYYY-MM-DD" from earlier data.
-function daysUntil(dateStr) {
+// Extract {year, month} from any form the sheet might send back:
+//   "2026-08"                                → month-year picker
+//   "2026-08-15"                             → legacy full date
+//   "Mon Jun 01 2026 00:00:00 GMT-0700 ..."  → cell formatted as Date
+function parseYearMonth(dateStr) {
   if (!dateStr) return null;
+  const match = String(dateStr).match(/^(\d{4})-(\d{2})/);
+  if (match) return { y: Number(match[1]), m: Number(match[2]) };
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return { y: d.getFullYear(), m: d.getMonth() + 1 };
+}
+
+// A month expires at the LAST day of that month (matches how medicine
+// packaging works: "Exp 08/2026" means safe through August 31).
+function daysUntil(dateStr) {
+  const ym = parseYearMonth(dateStr);
+  if (!ym) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  let target;
-  if (/^\d{4}-\d{2}$/.test(dateStr)) {
-    const [y, m] = dateStr.split("-").map(Number);
-    target = new Date(y, m, 0); // day 0 of next month = last day of month m
-  } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    const [y, m, d] = dateStr.split("-").map(Number);
-    target = new Date(y, m - 1, d);
-  } else {
-    return null;
-  }
+  const target = new Date(ym.y, ym.m, 0);
   target.setHours(0, 0, 0, 0);
   return Math.round((target - today) / (1000 * 60 * 60 * 24));
 }
 
 function formatMonthYear(dateStr) {
-  if (!dateStr) return "";
-  const match = dateStr.match(/^(\d{4})-(\d{2})/);
-  if (!match) return dateStr;
-  const [, y, m] = match;
-  return new Date(Number(y), Number(m) - 1, 1)
+  const ym = parseYearMonth(dateStr);
+  if (!ym) return dateStr || "";
+  return new Date(ym.y, ym.m - 1, 1)
     .toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
@@ -240,6 +247,7 @@ export default function MedicineCabinet() {
           type: parsed.type || f.type,
           strength: parsed.strength || f.strength,
           dosage: parsed.dosage || f.dosage,
+          volumeMl: parsed.volumeMl || f.volumeMl,
           condition: parsed.condition || f.condition,
           description: parsed.description || f.description,
         }));
@@ -722,7 +730,12 @@ export default function MedicineCabinet() {
                                 {bs.label}
                               </span>
                             </span>
-                            <span style={styles.batchQty}>{b.quantity || "—"}</span>
+                            <span style={styles.batchQty}>
+                              {b.quantity || "—"}
+                              {b.volumeMl && (
+                                <span style={styles.batchVolume}> · {b.volumeMl} mL</span>
+                              )}
+                            </span>
                             <span style={styles.batchActions}>
                               <button className="med-btn" onClick={() => openEdit(b)} style={styles.batchIconBtn} title="Edit batch">
                                 <Edit3 size={13} />
@@ -891,11 +904,26 @@ export default function MedicineCabinet() {
                     className="med-input"
                     value={form.quantity}
                     onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                    placeholder="10 tablets"
+                    placeholder={isLiquidType(form.type) ? "1 bottle" : "10 tablets"}
                     style={styles.formInput}
                   />
                 </label>
               </div>
+              {isLiquidType(form.type) && (
+                <label style={styles.label}>
+                  Volume per unit (mL) <span style={styles.optionalTag}>optional</span>
+                  <input
+                    className="med-input"
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={form.volumeMl}
+                    onChange={(e) => setForm({ ...form, volumeMl: e.target.value })}
+                    placeholder="e.g. 10 for eye drops, 60 for syrup"
+                    style={styles.formInput}
+                  />
+                </label>
+              )}
               <label style={styles.label}>
                 Description / notes <span style={styles.optionalTag}>optional</span>
                 <textarea
@@ -912,7 +940,10 @@ export default function MedicineCabinet() {
                 <input
                   className="med-input"
                   type="month"
-                  value={(form.expiryDate || "").slice(0, 7)}
+                  value={(() => {
+                    const ym = parseYearMonth(form.expiryDate);
+                    return ym ? `${ym.y}-${String(ym.m).padStart(2, "0")}` : "";
+                  })()}
                   onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
                   style={styles.formInput}
                 />
@@ -1267,6 +1298,10 @@ const styles = {
     fontSize: 13.5,
     fontFamily: "'IBM Plex Mono', monospace",
     color: "#3D3D34",
+  },
+  batchVolume: {
+    color: "#5C8A8E",
+    fontSize: 12,
   },
   batchActions: { display: "flex", gap: 4 },
   batchIconBtn: {

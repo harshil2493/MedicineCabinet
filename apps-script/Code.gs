@@ -14,9 +14,11 @@
 
 // purchaseDate kept in HEADERS for backward compat with sheets that already have that
 // column. The frontend no longer writes/reads it — it just stays empty on new rows.
+// volumeMl appended at the end so adding it doesn't shift existing columns.
 const HEADERS = [
   "id", "name", "type", "strength", "dosage",
   "quantity", "condition", "description", "purchaseDate", "expiryDate",
+  "volumeMl",
 ];
 
 const SETTINGS_TAB = "settings";
@@ -94,6 +96,19 @@ function ensureHeaders_(sh) {
   }
 }
 
+function cellToStr_(v) {
+  if (v === "" || v == null) return "";
+  if (Object.prototype.toString.call(v) === "[object Date]") {
+    var y = v.getFullYear();
+    var m = String(v.getMonth() + 1);
+    if (m.length < 2) m = "0" + m;
+    var d = String(v.getDate());
+    if (d.length < 2) d = "0" + d;
+    return y + "-" + m + "-" + d;
+  }
+  return String(v);
+}
+
 function readAll_() {
   var sh = sheet_();
   var last = sh.getLastRow();
@@ -103,7 +118,7 @@ function readAll_() {
     .filter(function (row) { return String(row[0] || "").length > 0; })
     .map(function (row) {
       var obj = {};
-      for (var i = 0; i < HEADERS.length; i++) obj[HEADERS[i]] = row[i] === "" ? "" : String(row[i]);
+      for (var i = 0; i < HEADERS.length; i++) obj[HEADERS[i]] = cellToStr_(row[i]);
       return obj;
     });
 }
@@ -123,10 +138,11 @@ function lookup_(name, strength) {
   var prompt =
     'For the medicine "' + name + '"' +
     (strength ? ' (' + strength + ')' : '') +
-    ', return JSON with exactly five fields:\n' +
+    ', return JSON with exactly six fields:\n' +
     '- "type": one of "drug", "liquid_oral", "injection", "eye_drops", "ear_drops". Pick "drug" for tablets/capsules/pills.\n' +
     '- "strength": most common strength/concentration if inferable from the name (e.g. "500 mg", "5 mg/mL"). Empty string if already in the name or unknown.\n' +
     '- "dosage": typical adult dosage with timing/frequency (e.g. "1 tablet twice daily, after meals" or "10 ml at bedtime"). Use plain English. If dosage varies widely, give the most common adult regimen.\n' +
+    '- "volumeMl": typical bottle/vial volume in mL as a plain number string (e.g. "10", "60"). Only for non-drug types. Return empty string for "drug" or if unknown.\n' +
     '- "condition": short phrase (under 6 words) for what it is commonly used for (e.g. "Fever and mild pain" or "Bacterial infection")\n' +
     '- "description": 2-3 plain-language sentences on what it is, how it works, and general precautions.\n' +
     'If you don\'t recognize the name, return type as "drug" and all other fields as empty strings.';
@@ -145,10 +161,11 @@ function lookup_(name, strength) {
           type: { type: "STRING", enum: ["drug", "liquid_oral", "injection", "eye_drops", "ear_drops"] },
           strength: { type: "STRING" },
           dosage: { type: "STRING" },
+          volumeMl: { type: "STRING" },
           condition: { type: "STRING" },
           description: { type: "STRING" },
         },
-        required: ["type", "strength", "dosage", "condition", "description"],
+        required: ["type", "strength", "dosage", "volumeMl", "condition", "description"],
       },
     },
   };
@@ -169,7 +186,7 @@ function lookup_(name, strength) {
   var text = ((data.candidates || [])[0]?.content?.parts || [])
     .map(function (p) { return p.text || ""; })
     .join("");
-  if (!text) return { type: "drug", strength: "", dosage: "", condition: "", description: "" };
+  if (!text) return { type: "drug", strength: "", dosage: "", volumeMl: "", condition: "", description: "" };
   return JSON.parse(text);
 }
 
