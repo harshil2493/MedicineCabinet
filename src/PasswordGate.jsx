@@ -33,7 +33,7 @@ export default function PasswordGate({ children }) {
         <div style={styles.brandMark}>
           <Pill size={22} color="#F6F5F1" strokeWidth={2.2} />
         </div>
-        <h1 style={styles.title}>The Cabinet</h1>
+        <h1 style={styles.title}>Harshil's Medicine Cabinet</h1>
         <p style={styles.subtitle}>Enter your cabinet password.</p>
         <input
           type="password"

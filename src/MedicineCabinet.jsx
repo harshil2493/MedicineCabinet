@@ -1,18 +1,64 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus } from "lucide-react";
+import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal } from "lucide-react";
 import { storage } from "./storage.js";
+import { lookupMedicine as apiLookup, getSettings, saveSettings } from "./api.js";
 
-const EMPTY = {
-  name: "",
-  type: "drug",
-  strength: "",
-  dosage: "",
-  quantity: "",
-  condition: "",
-  description: "",
-  purchaseDate: "",
-  expiryDate: "",
-};
+const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2 };
+
+function lowThresholdFor(type, settings) {
+  return (type || "drug") === "drug" ? settings.lowPill : settings.lowLiquid;
+}
+
+const EXPORT_COLUMNS = [
+  "name", "type", "strength", "dosage", "quantity",
+  "condition", "description", "expiryDate",
+];
+
+function toCSV(rows) {
+  const escape = (v) => {
+    const s = String(v == null ? "" : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const head = EXPORT_COLUMNS.join(",");
+  const body = rows.map((r) => EXPORT_COLUMNS.map((h) => escape(r[h])).join(",")).join("\n");
+  return head + "\n" + body + "\n";
+}
+
+function downloadCSV(rows) {
+  const blob = new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `medicine-cabinet-${toLocalISO(new Date())}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function toLocalISO(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function makeEmpty() {
+  const lastMonth = new Date();
+  lastMonth.setMonth(lastMonth.getMonth() - 1);
+  const y = lastMonth.getFullYear();
+  const m = String(lastMonth.getMonth() + 1).padStart(2, "0");
+  return {
+    name: "",
+    type: "drug",
+    strength: "",
+    dosage: "",
+    quantity: "10",
+    condition: "",
+    description: "",
+    expiryDate: `${y}-${m}`,
+  };
+}
 
 const TYPE_OPTIONS = [
   { value: "drug", label: "Medicine / drug" },
@@ -53,32 +99,56 @@ function mergeQuantities(a, b) {
 // Normalizes a field for duplicate comparison
 const norm = (v) => (v || "").trim().toLowerCase();
 
-// Two entries count as "exact similar" if every field except quantity/purchaseDate matches
+// Same batch = same name + type + strength + expiry. Merge quantities on save.
+// Different expiry with same name/type/strength → separate batch in the same group.
 function isDuplicate(a, b) {
   return (
     norm(a.name) === norm(b.name) &&
     norm(a.type || "drug") === norm(b.type || "drug") &&
     norm(a.strength) === norm(b.strength) &&
-    norm(a.dosage) === norm(b.dosage) &&
-    norm(a.condition) === norm(b.condition) &&
     norm(a.expiryDate) === norm(b.expiryDate)
   );
 }
 
+function groupKey(m) {
+  return norm(m.name) + "|" + (m.type || "drug") + "|" + norm(m.strength);
+}
+
+// Accepts "YYYY-MM" (treated as end of that month — matches how medicine
+// packaging works: "Exp 08/2026" means safe through August 31) or legacy
+// "YYYY-MM-DD" from earlier data.
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr);
+  let target;
+  if (/^\d{4}-\d{2}$/.test(dateStr)) {
+    const [y, m] = dateStr.split("-").map(Number);
+    target = new Date(y, m, 0); // day 0 of next month = last day of month m
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    target = new Date(y, m - 1, d);
+  } else {
+    return null;
+  }
   target.setHours(0, 0, 0, 0);
   return Math.round((target - today) / (1000 * 60 * 60 * 24));
 }
 
-function statusFor(dateStr) {
+function formatMonthYear(dateStr) {
+  if (!dateStr) return "";
+  const match = dateStr.match(/^(\d{4})-(\d{2})/);
+  if (!match) return dateStr;
+  const [, y, m] = match;
+  return new Date(Number(y), Number(m) - 1, 1)
+    .toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
+
+function statusFor(dateStr, expiryDays = 60) {
   const d = daysUntil(dateStr);
   if (d === null) return { label: "No expiry set", tone: "neutral", d };
   if (d < 0) return { label: `Expired ${Math.abs(d)}d ago`, tone: "expired", d };
-  if (d <= 60) return { label: `${d}d left`, tone: "soon", d };
+  if (d <= expiryDays) return { label: `${d}d left`, tone: "soon", d };
   return { label: `${d}d left`, tone: "fresh", d };
 }
 
@@ -94,14 +164,25 @@ export default function MedicineCabinet() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState(makeEmpty);
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState("expiry");
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [showSettings, setShowSettings] = useState(false);
+  const [viewFilter, setViewFilter] = useState("all");
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
+
+  const todayLabel = useMemo(
+    () => new Date().toLocaleDateString(undefined, {
+      weekday: "long", month: "long", day: "numeric",
+    }),
+    []
+  );
 
   useEffect(() => {
     (async () => {
@@ -110,6 +191,12 @@ export default function MedicineCabinet() {
         if (res && res.value) {
           setMeds(JSON.parse(res.value));
         }
+        try {
+          const { settings: fetched } = await getSettings();
+          if (fetched) setSettings({ ...DEFAULT_SETTINGS, ...fetched });
+        } catch {
+          // settings tab not created yet, or old Apps Script — use defaults
+        }
       } catch (e) {
         setError(e?.message || "Couldn't load your cabinet.");
       } finally {
@@ -117,6 +204,16 @@ export default function MedicineCabinet() {
       }
     })();
   }, []);
+
+  async function updateSettings(patch) {
+    const next = { ...settings, ...patch };
+    setSettings(next);
+    try {
+      await saveSettings(next);
+    } catch (e) {
+      setError(e?.message || "Couldn't save settings.");
+    }
+  }
 
   async function persist(next) {
     setMeds(next);
@@ -131,11 +228,31 @@ export default function MedicineCabinet() {
 
   async function lookupMedicine() {
     if (!form.name.trim()) return;
-    setLookupError("AI lookup not configured yet — fill in condition and description manually.");
+    setLookingUp(true);
+    setLookupError("");
+    try {
+      const parsed = await apiLookup(form.name.trim(), form.strength.trim());
+      if (!parsed.condition && !parsed.description && !parsed.dosage && !parsed.strength) {
+        setLookupError("Couldn't find that one — try the generic name, or fill it in yourself.");
+      } else {
+        setForm((f) => ({
+          ...f,
+          type: parsed.type || f.type,
+          strength: parsed.strength || f.strength,
+          dosage: parsed.dosage || f.dosage,
+          condition: parsed.condition || f.condition,
+          description: parsed.description || f.description,
+        }));
+      }
+    } catch (e) {
+      setLookupError(e?.message || "Lookup failed. You can fill this in manually.");
+    } finally {
+      setLookingUp(false);
+    }
   }
 
   function openAdd() {
-    setForm(EMPTY);
+    setForm(makeEmpty());
     setEditingId(null);
     setLookupError("");
     setShowForm(true);
@@ -150,7 +267,7 @@ export default function MedicineCabinet() {
 
   function closeForm() {
     setShowForm(false);
-    setForm(EMPTY);
+    setForm(makeEmpty());
     setEditingId(null);
     setLookupError("");
   }
@@ -169,7 +286,6 @@ export default function MedicineCabinet() {
               ? {
                   ...m,
                   quantity: mergeQuantities(m.quantity, form.quantity),
-                  purchaseDate: form.purchaseDate || m.purchaseDate,
                 }
               : m
           )
@@ -183,30 +299,12 @@ export default function MedicineCabinet() {
   }
 
   function removeMed(id) {
+    const med = meds.find((m) => m.id === id);
+    if (!med) return;
+    const ok = window.confirm(`Remove "${med.name}" from the cabinet?`);
+    if (!ok) return;
     persist(meds.filter((m) => m.id !== id));
   }
-
-  const filtered = useMemo(() => {
-    let list = meds.filter((m) => {
-      const q = query.toLowerCase();
-      return (
-        m.name.toLowerCase().includes(q) ||
-        (m.condition || "").toLowerCase().includes(q)
-      );
-    });
-    if (sortMode === "expiry") {
-      list = [...list].sort((a, b) => {
-        const da = daysUntil(a.expiryDate);
-        const db = daysUntil(b.expiryDate);
-        if (da === null) return 1;
-        if (db === null) return -1;
-        return da - db;
-      });
-    } else {
-      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
-    }
-    return list;
-  }, [meds, query, sortMode]);
 
   const nameSuggestions = useMemo(() => {
     const q = norm(form.name);
@@ -238,7 +336,7 @@ export default function MedicineCabinet() {
   const pendingItems = useMemo(() => {
     const items = [];
     meds.forEach((m) => {
-      const status = statusFor(m.expiryDate);
+      const status = statusFor(m.expiryDate, settings.expiryDays);
       if (status.tone === "expired") {
         items.push({
           medId: m.id,
@@ -255,7 +353,8 @@ export default function MedicineCabinet() {
         });
       }
       const q = parseQuantity(m.quantity);
-      if (q && q.num <= 2) {
+      const threshold = lowThresholdFor(m.type, settings);
+      if (q && q.num <= threshold) {
         items.push({
           medId: m.id,
           rank: 2,
@@ -265,7 +364,76 @@ export default function MedicineCabinet() {
       }
     });
     return items.sort((a, b) => a.rank - b.rank);
+  }, [meds, settings]);
+
+  const attentionIds = useMemo(
+    () => new Set(pendingItems.map((p) => p.medId)),
+    [pendingItems]
+  );
+
+  const groups = useMemo(() => {
+    const map = new Map();
+    meds.forEach((m) => {
+      const key = groupKey(m);
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          name: m.name,
+          type: m.type || "drug",
+          strength: m.strength || "",
+          condition: "",
+          description: "",
+          dosage: "",
+          batches: [],
+        });
+      }
+      const g = map.get(key);
+      g.batches.push(m);
+      if (!g.condition && m.condition) g.condition = m.condition;
+      if (!g.description && m.description) g.description = m.description;
+      if (!g.dosage && m.dosage) g.dosage = m.dosage;
+    });
+    // Sort batches within each group by expiry (earliest first, blanks last)
+    map.forEach((g) => {
+      g.batches.sort((a, b) => {
+        const da = daysUntil(a.expiryDate);
+        const db = daysUntil(b.expiryDate);
+        if (da === null) return 1;
+        if (db === null) return -1;
+        return da - db;
+      });
+    });
+    return [...map.values()];
   }, [meds]);
+
+  const filtered = useMemo(() => {
+    let list = groups.filter((g) => {
+      const q = query.toLowerCase();
+      return (
+        g.name.toLowerCase().includes(q) ||
+        (g.condition || "").toLowerCase().includes(q)
+      );
+    });
+    if (viewFilter === "attention") {
+      list = list.filter((g) => g.batches.some((b) => attentionIds.has(b.id)));
+    }
+    const totalQty = (g) => g.batches.reduce((s, b) => {
+      const q = parseQuantity(b.quantity);
+      return q ? s + q.num : s;
+    }, 0);
+    const earliestDays = (g) => {
+      const d = daysUntil(g.batches[0]?.expiryDate);
+      return d === null ? Infinity : d;
+    };
+    if (sortMode === "expiry") {
+      list = [...list].sort((a, b) => earliestDays(a) - earliestDays(b));
+    } else if (sortMode === "quantity") {
+      list = [...list].sort((a, b) => totalQty(a) - totalQty(b));
+    } else {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return list;
+  }, [groups, query, sortMode, viewFilter, attentionIds]);
 
   const pendingIcon = {
     expired: <AlertTriangle size={15} color="#B8433A" strokeWidth={2.2} />,
@@ -273,10 +441,7 @@ export default function MedicineCabinet() {
     low: <PackageMinus size={15} color="#6E7A8A" strokeWidth={2.2} />,
   };
 
-  const expiringSoonCount = meds.filter((m) => {
-    const s = statusFor(m.expiryDate);
-    return s.tone === "soon" || s.tone === "expired";
-  }).length;
+  const attentionCount = attentionIds.size;
 
   return (
     <div style={styles.page}>
@@ -301,11 +466,12 @@ export default function MedicineCabinet() {
         <div style={styles.headerTop}>
           <div style={styles.brandRow}>
             <div style={styles.brandMark}>
-              <Pill size={18} color="#F6F5F1" strokeWidth={2.2} />
+              <Pill size={20} color="#F6F5F1" strokeWidth={2.2} />
+              <HeartPulse size={12} color="#F6F5F1" strokeWidth={2.5} style={styles.brandAccent} />
             </div>
             <div>
-              <h1 style={styles.title}>The Cabinet</h1>
-              <p style={styles.subtitle}>What's stocked, what's running low, what's running out</p>
+              <h1 style={styles.title}>Harshil's Medicine Cabinet</h1>
+              <p style={styles.today}>{todayLabel}</p>
             </div>
           </div>
           <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
@@ -314,15 +480,89 @@ export default function MedicineCabinet() {
         </div>
 
         <div style={styles.statRow}>
-          <div style={styles.statCard}>
+          <button
+            type="button"
+            className="med-btn"
+            onClick={() => setViewFilter("all")}
+            style={{
+              ...styles.statCard,
+              ...(viewFilter === "all" ? styles.statCardActive : {}),
+            }}
+          >
             <span style={styles.statNumber}>{meds.length}</span>
             <span style={styles.statLabel}>{meds.length === 1 ? "medicine" : "medicines"} tracked</span>
-          </div>
-          <div style={{ ...styles.statCard, ...(expiringSoonCount > 0 ? styles.statCardWarn : {}) }}>
-            <span style={styles.statNumber}>{expiringSoonCount}</span>
+          </button>
+          <button
+            type="button"
+            className="med-btn"
+            onClick={() => setViewFilter("attention")}
+            style={{
+              ...styles.statCard,
+              ...(attentionCount > 0 ? styles.statCardWarn : {}),
+              ...(viewFilter === "attention" ? styles.statCardActive : {}),
+            }}
+          >
+            <span style={styles.statNumber}>{attentionCount}</span>
             <span style={styles.statLabel}>need attention</span>
-          </div>
+          </button>
+          <button
+            type="button"
+            className="med-btn"
+            onClick={() => setShowSettings((v) => !v)}
+            style={styles.settingsBtn}
+            title="Attention thresholds"
+            aria-label="Attention thresholds"
+          >
+            <SlidersHorizontal size={16} strokeWidth={2.2} />
+          </button>
         </div>
+
+        {showSettings && (
+          <div style={styles.settingsPanel}>
+            <div style={styles.settingsTitle}>Attention thresholds</div>
+            <div style={styles.settingsRow}>
+              <label style={styles.settingsLabel}>
+                Flag as expiring within
+                <div style={styles.settingsInputWrap}>
+                  <input
+                    type="number"
+                    min={1}
+                    value={settings.expiryDays}
+                    onChange={(e) => updateSettings({ expiryDays: Math.max(1, Number(e.target.value) || 1) })}
+                    style={styles.settingsInput}
+                  />
+                  <span style={styles.settingsUnit}>days</span>
+                </div>
+              </label>
+              <label style={styles.settingsLabel}>
+                Pills/tablets low at
+                <div style={styles.settingsInputWrap}>
+                  <input
+                    type="number"
+                    min={0}
+                    value={settings.lowPill}
+                    onChange={(e) => updateSettings({ lowPill: Math.max(0, Number(e.target.value) || 0) })}
+                    style={styles.settingsInput}
+                  />
+                  <span style={styles.settingsUnit}>or fewer</span>
+                </div>
+              </label>
+              <label style={styles.settingsLabel}>
+                Drops/liquid low at
+                <div style={styles.settingsInputWrap}>
+                  <input
+                    type="number"
+                    min={0}
+                    value={settings.lowLiquid}
+                    onChange={(e) => updateSettings({ lowLiquid: Math.max(0, Number(e.target.value) || 0) })}
+                    style={styles.settingsInput}
+                  />
+                  <span style={styles.settingsUnit}>or fewer</span>
+                </div>
+              </label>
+            </div>
+          </div>
+        )}
       </header>
 
       {pendingItems.length > 0 && (
@@ -365,7 +605,19 @@ export default function MedicineCabinet() {
         >
           <option value="expiry">Sort by expiry</option>
           <option value="name">Sort by name</option>
+          <option value="quantity">Sort by quantity</option>
         </select>
+        <button
+          type="button"
+          className="med-btn"
+          onClick={() => downloadCSV(meds)}
+          disabled={!meds.length}
+          style={{ ...styles.exportBtn, opacity: meds.length ? 1 : 0.5, cursor: meds.length ? "pointer" : "default" }}
+          title="Export all medicines as CSV"
+        >
+          <Download size={14} strokeWidth={2.2} />
+          Export
+        </button>
       </div>
 
       {error && <div style={styles.errorBanner}>{error}</div>}
@@ -390,40 +642,48 @@ export default function MedicineCabinet() {
             <p style={styles.emptyBody}>Try a different search term.</p>
           </div>
         ) : (
-          filtered.map((med) => {
-            const status = statusFor(med.expiryDate);
+          filtered.map((g) => {
+            const earliest = g.batches[0];
+            const status = statusFor(earliest?.expiryDate, settings.expiryDays);
             const tone = toneStyles[status.tone];
-            const isOpen = expandedId === med.id;
+            const isOpen = expandedId === g.key;
+            const totalQty = g.batches.reduce((s, b) => {
+              const q = parseQuantity(b.quantity);
+              return q ? s + q.num : s;
+            }, 0);
+            const anyUnparseable = g.batches.some((b) => b.quantity && !parseQuantity(b.quantity));
+            const totalLabel = anyUnparseable
+              ? g.batches.map((b) => b.quantity).filter(Boolean).join(" + ")
+              : String(totalQty);
             return (
-              <div key={med.id} className="med-card" style={{ ...styles.card, animation: "slideUp 0.25s ease" }}>
+              <div key={g.key} className="med-card" style={{ ...styles.card, animation: "slideUp 0.25s ease" }}>
                 <div style={styles.cardTab(tone)} />
                 <div
                   style={styles.cardMain}
-                  onClick={() => setExpandedId(isOpen ? null : med.id)}
+                  onClick={() => setExpandedId(isOpen ? null : g.key)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && setExpandedId(isOpen ? null : med.id)}
+                  onKeyDown={(e) => e.key === "Enter" && setExpandedId(isOpen ? null : g.key)}
                 >
                   <div style={styles.cardTop}>
                     <div>
                       <div style={styles.nameRow}>
-                        {med.type === "eye_drops" || med.type === "ear_drops" ? (
+                        {g.type === "eye_drops" || g.type === "ear_drops" ? (
                           <Droplet size={14} color="#5C8A8E" strokeWidth={2.2} />
-                        ) : med.type === "liquid_oral" ? (
+                        ) : g.type === "liquid_oral" ? (
                           <GlassWater size={14} color="#5C8A8E" strokeWidth={2.2} />
-                        ) : med.type === "injection" ? (
+                        ) : g.type === "injection" ? (
                           <Syringe size={14} color="#5C8A8E" strokeWidth={2.2} />
                         ) : null}
-                        <h3 style={styles.medName}>{med.name}</h3>
-                        {med.type && med.type !== "drug" && (
-                          <span style={styles.typeTag}>{typeLabel(med.type)}</span>
+                        <h3 style={styles.medName}>{g.name}</h3>
+                        {g.type && g.type !== "drug" && (
+                          <span style={styles.typeTag}>{typeLabel(g.type)}</span>
                         )}
                       </div>
-                      {(med.strength || med.dosage) && (
-                        <span style={styles.medDosage}>
-                          {[med.strength, med.dosage].filter(Boolean).join(" · ")}
-                        </span>
-                      )}
+                      <span style={styles.medDosage}>
+                        {[g.strength, `${totalLabel} on hand`, g.batches.length > 1 && `${g.batches.length} batches`]
+                          .filter(Boolean).join(" · ")}
+                      </span>
                     </div>
                     <div style={styles.badgeRow}>
                       <span style={{ ...styles.badge, background: tone.bg, color: tone.fg }}>
@@ -437,54 +697,45 @@ export default function MedicineCabinet() {
                       />
                     </div>
                   </div>
-                  {med.condition && <p style={styles.medCondition}>{med.condition}</p>}
+                  {g.condition && <p style={styles.medCondition}>{g.condition}</p>}
                 </div>
 
                 {isOpen && (
                   <div style={styles.cardDetails}>
-                    <div style={styles.detailGrid}>
-                      {med.strength && (
-                        <div style={styles.detailItem}>
-                          <span style={styles.detailLabel}>Strength</span>
-                          <span style={styles.detailValue}>{med.strength}</span>
-                        </div>
-                      )}
-                      {med.quantity && (
-                        <div style={styles.detailItem}>
-                          <span style={styles.detailLabel}>Quantity</span>
-                          <span style={styles.detailValue}>{med.quantity}</span>
-                        </div>
-                      )}
-                      {med.purchaseDate && (
-                        <div style={styles.detailItem}>
-                          <span style={styles.detailLabel}>Purchased</span>
-                          <span style={styles.detailValue}>{med.purchaseDate}</span>
-                        </div>
-                      )}
-                      {med.expiryDate && (
-                        <div style={styles.detailItem}>
-                          <span style={styles.detailLabel}>Expires</span>
-                          <span style={styles.detailValue}>{med.expiryDate}</span>
-                        </div>
-                      )}
+                    {g.dosage && (
+                      <p style={styles.dosageLine}><strong>Dosage: </strong>{g.dosage}</p>
+                    )}
+                    <div style={styles.batchTable}>
+                      <div style={styles.batchHead}>
+                        <span>Expires</span>
+                        <span>Quantity</span>
+                        <span></span>
+                      </div>
+                      {g.batches.map((b) => {
+                        const bs = statusFor(b.expiryDate, settings.expiryDays);
+                        const bt = toneStyles[bs.tone];
+                        return (
+                          <div key={b.id} style={styles.batchRow}>
+                            <span style={styles.batchExpiry}>
+                              {formatMonthYear(b.expiryDate) || "—"}
+                              <span style={{ ...styles.batchStatus, color: bt.fg, background: bt.bg }}>
+                                {bs.label}
+                              </span>
+                            </span>
+                            <span style={styles.batchQty}>{b.quantity || "—"}</span>
+                            <span style={styles.batchActions}>
+                              <button className="med-btn" onClick={() => openEdit(b)} style={styles.batchIconBtn} title="Edit batch">
+                                <Edit3 size={13} />
+                              </button>
+                              <button className="med-btn" onClick={() => removeMed(b.id)} style={{ ...styles.batchIconBtn, color: "#B8433A" }} title="Remove batch">
+                                <Trash2 size={13} />
+                              </button>
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                    {med.description && <p style={styles.medDescription}>{med.description}</p>}
-                    <div style={styles.cardActions}>
-                      <button
-                        className="med-btn"
-                        onClick={() => openEdit(med)}
-                        style={styles.iconBtn}
-                      >
-                        <Edit3 size={14} /> Edit
-                      </button>
-                      <button
-                        className="med-btn"
-                        onClick={() => removeMed(med.id)}
-                        style={{ ...styles.iconBtn, color: "#B8433A" }}
-                      >
-                        <Trash2 size={14} /> Remove
-                      </button>
-                    </div>
+                    {g.description && <p style={styles.medDescription}>{g.description}</p>}
                   </div>
                 )}
               </div>
@@ -505,27 +756,73 @@ export default function MedicineCabinet() {
             <form onSubmit={submitForm} style={styles.form}>
               <label style={{ ...styles.label, position: "relative" }}>
                 Name
-                <input
-                  className="med-input"
-                  required
-                  value={form.name}
-                  onChange={(e) => {
-                    setForm({ ...form, name: e.target.value });
-                    setShowSuggestions(true);
-                  }}
-                  onFocus={() => setShowSuggestions(true)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
-                  placeholder="e.g. Azithral 500"
-                  style={styles.formInput}
-                  autoComplete="off"
-                />
+                <div style={styles.nameInputRow}>
+                  <input
+                    className="med-input"
+                    required
+                    value={form.name}
+                    onChange={(e) => {
+                      setForm({ ...form, name: e.target.value });
+                      setShowSuggestions(true);
+                      setHighlightIdx(-1);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 120)}
+                    onKeyDown={(e) => {
+                      const list = nameSuggestions;
+                      if (!showSuggestions || !list.length) {
+                        if (e.key === "Escape") setShowSuggestions(false);
+                        return;
+                      }
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        setHighlightIdx((i) => Math.min(list.length - 1, i + 1));
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        setHighlightIdx((i) => Math.max(0, i - 1));
+                      } else if (e.key === "Enter" && highlightIdx >= 0) {
+                        e.preventDefault();
+                        applySuggestion(list[highlightIdx]);
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        setShowSuggestions(false);
+                      }
+                    }}
+                    placeholder="e.g. Azithral 500"
+                    style={{ ...styles.formInput, flex: 1 }}
+                    autoComplete="off"
+                  />
+                  {form.name.trim() && (
+                    <button
+                      type="button"
+                      className="med-btn"
+                      onClick={lookupMedicine}
+                      disabled={lookingUp}
+                      style={{
+                        ...styles.inlineLookupBtn,
+                        opacity: lookingUp ? 0.55 : 1,
+                        cursor: lookingUp ? "default" : "pointer",
+                      }}
+                      title="Autofill with AI"
+                    >
+                      <Sparkles size={14} />
+                      {lookingUp ? "…" : "Suggest"}
+                    </button>
+                  )}
+                </div>
                 {showSuggestions && nameSuggestions.length > 0 && (
-                  <div style={styles.suggestBox}>
-                    {nameSuggestions.map((s) => (
+                  <div style={styles.suggestBox} role="listbox">
+                    {nameSuggestions.map((s, i) => (
                       <div
                         key={s.id}
-                        style={styles.suggestItem}
+                        role="option"
+                        aria-selected={i === highlightIdx}
+                        style={{
+                          ...styles.suggestItem,
+                          ...(i === highlightIdx ? styles.suggestItemActive : {}),
+                        }}
                         onMouseDown={() => applySuggestion(s)}
+                        onMouseEnter={() => setHighlightIdx(i)}
                       >
                         <span style={styles.suggestName}>{s.name}</span>
                         {(s.strength || s.dosage) && (
@@ -570,35 +867,21 @@ export default function MedicineCabinet() {
                     className="med-input"
                     value={form.dosage}
                     onChange={(e) => setForm({ ...form, dosage: e.target.value })}
-                    placeholder="1 tablet, 2x daily"
+                    placeholder="1 tablet twice daily, after meals"
                     style={styles.formInput}
                   />
                 </label>
               </div>
 
-              <button
-                type="button"
-                className="med-btn"
-                onClick={lookupMedicine}
-                disabled={!form.name.trim() || lookingUp}
-                style={{
-                  ...styles.lookupBtn,
-                  opacity: !form.name.trim() || lookingUp ? 0.55 : 1,
-                  cursor: !form.name.trim() || lookingUp ? "default" : "pointer",
-                }}
-              >
-                <Sparkles size={14} />
-                {lookingUp ? "Looking it up…" : "Suggest what it's for"}
-              </button>
               {lookupError && <p style={styles.lookupError}>{lookupError}</p>}
               <div style={styles.formRow}>
                 <label style={{ ...styles.label, flex: 2 }}>
-                  What it's for / when to take
+                  What it's for
                   <input
                     className="med-input"
                     value={form.condition}
                     onChange={(e) => setForm({ ...form, condition: e.target.value })}
-                    placeholder="Fever, after meals"
+                    placeholder="Fever, bacterial infection"
                     style={styles.formInput}
                   />
                 </label>
@@ -619,33 +902,21 @@ export default function MedicineCabinet() {
                   className="med-input"
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  placeholder="What it is, how it works, things to remember — or tap 'Suggest what it's for' above"
+                  placeholder="What it is, how it works, things to remember — or tap Suggest above"
                   style={styles.formTextarea}
-                  rows={3}
+                  rows={6}
                 />
               </label>
-              <div style={styles.formRow}>
-                <label style={{ ...styles.label, flex: 1 }}>
-                  Purchase date
-                  <input
-                    className="med-input"
-                    type="date"
-                    value={form.purchaseDate}
-                    onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })}
-                    style={styles.formInput}
-                  />
-                </label>
-                <label style={{ ...styles.label, flex: 1 }}>
-                  Expiry date
-                  <input
-                    className="med-input"
-                    type="date"
-                    value={form.expiryDate}
-                    onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
-                    style={styles.formInput}
-                  />
-                </label>
-              </div>
+              <label style={styles.label}>
+                Expiry (month/year)
+                <input
+                  className="med-input"
+                  type="month"
+                  value={(form.expiryDate || "").slice(0, 7)}
+                  onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+                  style={styles.formInput}
+                />
+              </label>
               <button className="med-btn" type="submit" style={styles.submitBtn}>
                 {editingId ? "Save changes" : "Add to cabinet"}
               </button>
@@ -681,24 +952,43 @@ const styles = {
   },
   brandRow: { display: "flex", alignItems: "flex-start", gap: 12 },
   brandMark: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     background: "#2D6A6E",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
     marginTop: 2,
+    position: "relative",
+    boxShadow: "0 2px 6px rgba(45,106,110,0.25)",
+  },
+  brandAccent: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    background: "#B8433A",
+    borderRadius: 4,
+    padding: 1,
   },
   title: {
     fontFamily: "'Fraunces', serif",
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: 600,
     margin: 0,
     letterSpacing: "-0.01em",
+    lineHeight: 1.15,
   },
   subtitle: { margin: "3px 0 0", fontSize: 13.5, color: "#7A7A6E" },
+  today: {
+    margin: "6px 0 0",
+    fontSize: 17,
+    fontFamily: "'Fraunces', serif",
+    fontWeight: 500,
+    color: "#2D6A6E",
+    letterSpacing: "-0.005em",
+  },
   addBtn: {
     display: "flex",
     alignItems: "center",
@@ -713,7 +1003,7 @@ const styles = {
     cursor: "pointer",
     fontFamily: "'Inter', sans-serif",
   },
-  statRow: { display: "flex", gap: 10, maxWidth: 720, margin: "18px auto 0" },
+  statRow: { display: "flex", gap: 10, maxWidth: 720, margin: "18px auto 0", flexWrap: "wrap" },
   statCard: {
     background: "#F1EEE3",
     borderRadius: 10,
@@ -721,8 +1011,63 @@ const styles = {
     display: "flex",
     alignItems: "baseline",
     gap: 8,
+    border: "1px solid transparent",
+    cursor: "pointer",
+    fontFamily: "'Inter', sans-serif",
+    color: "#26261F",
   },
   statCardWarn: { background: "#FBEEDD" },
+  statCardActive: { border: "1px solid #2D6A6E", boxShadow: "0 0 0 2px rgba(45,106,110,0.15)" },
+  settingsBtn: {
+    background: "#FFFFFF",
+    border: "1px solid #E4E1D4",
+    borderRadius: 10,
+    padding: "0 12px",
+    color: "#5C5C54",
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    marginLeft: "auto",
+  },
+  settingsPanel: {
+    maxWidth: 720,
+    margin: "12px auto 0",
+    background: "#FFFFFF",
+    border: "1px solid #E4E1D4",
+    borderRadius: 12,
+    padding: "14px 16px",
+  },
+  settingsTitle: {
+    fontFamily: "'Fraunces', serif",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#5C5C54",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    marginBottom: 10,
+  },
+  settingsRow: { display: "flex", gap: 16, flexWrap: "wrap" },
+  settingsLabel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    fontSize: 12.5,
+    color: "#5C5C54",
+    fontWeight: 500,
+    flex: "1 1 180px",
+  },
+  settingsInputWrap: { display: "flex", alignItems: "center", gap: 6 },
+  settingsInput: {
+    border: "1px solid #E4E1D4",
+    borderRadius: 8,
+    padding: "7px 10px",
+    fontSize: 14,
+    fontFamily: "'IBM Plex Mono', monospace",
+    width: 80,
+    background: "#FFFFFF",
+    color: "#26261F",
+  },
+  settingsUnit: { fontSize: 12.5, color: "#7A7A6E" },
   statNumber: { fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, fontWeight: 500 },
   statLabel: { fontSize: 12.5, color: "#7A7A6E" },
   controls: {
@@ -758,6 +1103,19 @@ const styles = {
     background: "#FFFFFF",
     fontFamily: "'Inter', sans-serif",
     color: "#5C5C54",
+  },
+  exportBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    background: "#FFFFFF",
+    border: "1px solid #E4E1D4",
+    borderRadius: 10,
+    padding: "9px 12px",
+    fontSize: 13,
+    fontFamily: "'Inter', sans-serif",
+    color: "#3D3D34",
+    fontWeight: 500,
   },
   pendingSection: {
     maxWidth: 720,
@@ -852,14 +1210,75 @@ const styles = {
   detailLabel: { fontSize: 11, color: "#9B9B90", textTransform: "uppercase", letterSpacing: "0.04em" },
   detailValue: { fontSize: 13.5, fontFamily: "'IBM Plex Mono', monospace" },
   medDescription: {
-    fontSize: 13,
-    color: "#615F53",
-    lineHeight: 1.55,
-    margin: "12px 0 0",
-    paddingTop: 12,
+    fontSize: 14.5,
+    color: "#3D3D34",
+    lineHeight: 1.65,
+    margin: "14px 0 0",
+    paddingTop: 14,
     borderTop: "1px dashed #E9E6DA",
+    whiteSpace: "pre-wrap",
   },
   cardActions: { display: "flex", gap: 8, marginTop: 14 },
+  dosageLine: {
+    margin: "12px 0 0",
+    fontSize: 13.5,
+    color: "#3D3D34",
+  },
+  batchTable: {
+    marginTop: 12,
+    border: "1px solid #E9E6DA",
+    borderRadius: 10,
+    overflow: "hidden",
+  },
+  batchHead: {
+    display: "grid",
+    gridTemplateColumns: "1.6fr 1fr auto",
+    gap: 10,
+    padding: "8px 12px",
+    background: "#F6F5F1",
+    fontSize: 10.5,
+    color: "#9B9B90",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  },
+  batchRow: {
+    display: "grid",
+    gridTemplateColumns: "1.6fr 1fr auto",
+    gap: 10,
+    padding: "10px 12px",
+    borderTop: "1px solid #F1EEE3",
+    alignItems: "center",
+  },
+  batchExpiry: {
+    fontSize: 13.5,
+    fontFamily: "'IBM Plex Mono', monospace",
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+  },
+  batchStatus: {
+    fontSize: 10.5,
+    padding: "2px 7px",
+    borderRadius: 20,
+    alignSelf: "flex-start",
+    fontFamily: "'IBM Plex Mono', monospace",
+  },
+  batchQty: {
+    fontSize: 13.5,
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "#3D3D34",
+  },
+  batchActions: { display: "flex", gap: 4 },
+  batchIconBtn: {
+    background: "transparent",
+    border: "none",
+    borderRadius: 6,
+    padding: 6,
+    cursor: "pointer",
+    color: "#7A7A6E",
+    display: "flex",
+    alignItems: "center",
+  },
   iconBtn: {
     display: "flex",
     alignItems: "center",
@@ -953,6 +1372,7 @@ const styles = {
     gap: 1,
     borderBottom: "1px solid #F1EEE3",
   },
+  suggestItemActive: { background: "#EAF1F1" },
   suggestName: { fontSize: 13.5, color: "#26261F", fontWeight: 500 },
   suggestMeta: { fontSize: 11.5, color: "#9B9B90", fontFamily: "'IBM Plex Mono', monospace" },
   formInput: {
@@ -967,27 +1387,30 @@ const styles = {
   formTextarea: {
     border: "1px solid #E4E1D4",
     borderRadius: 9,
-    padding: "10px 12px",
-    fontSize: 13.5,
+    padding: "12px 14px",
+    fontSize: 14,
     fontFamily: "'Inter', sans-serif",
     background: "#FFFFFF",
     color: "#26261F",
     resize: "vertical",
-    lineHeight: 1.5,
+    lineHeight: 1.6,
+    minHeight: 140,
   },
-  lookupBtn: {
+  nameInputRow: { display: "flex", gap: 8, alignItems: "stretch" },
+  inlineLookupBtn: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    background: "#EAF1F1",
-    color: "#2D6A6E",
-    border: "1px dashed #2D6A6E",
+    gap: 5,
+    background: "#2D6A6E",
+    color: "#F6F5F1",
+    border: "none",
     borderRadius: 9,
-    padding: "9px 12px",
-    fontSize: 13,
+    padding: "0 12px",
+    fontSize: 12.5,
     fontWeight: 500,
     fontFamily: "'Inter', sans-serif",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   lookupError: { fontSize: 12, color: "#B8433A", margin: "-4px 0 0" },
   submitBtn: {

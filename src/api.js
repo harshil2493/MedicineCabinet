@@ -54,3 +54,15 @@ export function listMedicines() {
 export function replaceMedicines(medicines) {
   return post("replace", { medicines });
 }
+
+export function lookupMedicine(name, strength) {
+  return post("lookup", { name, strength });
+}
+
+export function getSettings() {
+  return post("get_settings");
+}
+
+export function saveSettings(settings) {
+  return post("save_settings", { settings });
+}
