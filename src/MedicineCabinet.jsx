@@ -640,7 +640,7 @@ export default function MedicineCabinet() {
         </button>
       </div>
 
-      {Object.keys(typeCounts).length > 1 && (
+      {groups.length > 0 && (
         <div style={styles.chipRow}>
           <button
             type="button"
@@ -649,6 +649,7 @@ export default function MedicineCabinet() {
             style={{ ...styles.chip, ...(typeFilter === "" ? styles.chipActive : {}) }}
           >
             All types
+            <span style={styles.chipCount}>{groups.length}</span>
           </button>
           {TYPE_OPTIONS.filter((t) => typeCounts[t.value]).map((t) => {
             const Icon = t.value === "drug" ? Pill
@@ -733,10 +734,18 @@ export default function MedicineCabinet() {
                           <span style={styles.typeTag}>{typeLabel(g.type)}</span>
                         )}
                       </div>
-                      <span style={styles.medDosage}>
-                        {[g.strength, `${totalLabel} on hand`, g.batches.length > 1 && `${g.batches.length} batches`]
-                          .filter(Boolean).join(" · ")}
-                      </span>
+                      <div style={styles.medMeta}>
+                        <div style={styles.medMetaPrimary}>
+                          {[g.strength, `${totalLabel} on hand`].filter(Boolean).join(" · ")}
+                        </div>
+                        {(g.batches.length > 1 || earliest?.expiryDate) && (
+                          <div style={styles.medMetaSecondary}>
+                            {g.batches.length > 1
+                              ? `${g.batches.length} batches · next ${formatMonthYear(earliest.expiryDate)}`
+                              : `exp ${formatMonthYear(earliest.expiryDate)}`}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div style={styles.badgeRow}>
                       <span style={{ ...styles.badge, background: tone.bg, color: tone.fg }}>
@@ -1295,6 +1304,22 @@ const styles = {
     fontSize: 12.5,
     color: "#7A7A6E",
     marginTop: 2,
+  },
+  medMeta: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 1,
+    marginTop: 4,
+  },
+  medMetaPrimary: {
+    fontFamily: "'Inter', sans-serif",
+    fontSize: 13,
+    color: "#5C5C54",
+  },
+  medMetaSecondary: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 11.5,
+    color: "#9B9B90",
   },
   medCondition: { margin: "8px 0 0", fontSize: 13.5, color: "#615F53" },
   badgeRow: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
