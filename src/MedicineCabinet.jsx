@@ -66,15 +66,35 @@ function makeEmpty() {
 }
 
 const TYPE_OPTIONS = [
-  { value: "drug", label: "Medicine / drug" },
-  { value: "liquid_oral", label: "Liquid oral" },
-  { value: "injection", label: "Injection" },
-  { value: "eye_drops", label: "Eye drops" },
-  { value: "ear_drops", label: "Ear drops" },
+  { value: "drug", label: "Tablet / pill", tagLabel: "Tablet" },
+  { value: "liquid_oral", label: "Liquid oral", tagLabel: "Liquid" },
+  { value: "injection", label: "Injection", tagLabel: "Injection" },
+  { value: "eye_drops", label: "Eye drops", tagLabel: "Eye drops" },
+  { value: "ear_drops", label: "Ear drops", tagLabel: "Ear drops" },
 ];
 
 function typeLabel(type) {
-  return TYPE_OPTIONS.find((t) => t.value === type)?.label || "Medicine / drug";
+  return TYPE_OPTIONS.find((t) => t.value === type)?.label || "Tablet / pill";
+}
+
+function tagLabel(type) {
+  return TYPE_OPTIONS.find((t) => t.value === type)?.tagLabel || "Tablet";
+}
+
+const TYPE_TONES = {
+  drug:        { bg: "#EDE8DA", fg: "#7A6C48" }, // tan / sepia
+  liquid_oral: { bg: "#E4EEF2", fg: "#4E7D8A" }, // light blue
+  injection:   { bg: "#F4DDD9", fg: "#A0554C" }, // muted red
+  eye_drops:   { bg: "#DFEAE1", fg: "#517062" }, // sage
+  ear_drops:   { bg: "#E8DFEC", fg: "#6E5980" }, // muted purple
+};
+
+function TypeIcon({ type, size = 14, color }) {
+  const props = { size, color, strokeWidth: 2.2 };
+  if (type === "eye_drops" || type === "ear_drops") return <Droplet {...props} />;
+  if (type === "liquid_oral") return <GlassWater {...props} />;
+  if (type === "injection") return <Syringe {...props} />;
+  return <Pill {...props} />;
 }
 
 // Parses a quantity string like "10 tablets" into { num, unit }
@@ -659,21 +679,21 @@ export default function MedicineCabinet() {
             <span style={styles.chipCount}>{groups.length}</span>
           </button>
           {TYPE_OPTIONS.filter((t) => typeCounts[t.value]).map((t) => {
-            const Icon = t.value === "drug" ? Pill
-              : t.value === "liquid_oral" ? GlassWater
-              : t.value === "injection" ? Syringe
-              : Droplet;
             const active = typeFilter === t.value;
+            const tone = TYPE_TONES[t.value] || TYPE_TONES.drug;
             return (
               <button
                 key={t.value}
                 type="button"
                 className="med-btn"
                 onClick={() => setTypeFilter(active ? "" : t.value)}
-                style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }}
+                style={{
+                  ...styles.chip,
+                  ...(active ? { background: tone.bg, border: `1px solid ${tone.fg}`, color: tone.fg, fontWeight: 500 } : {}),
+                }}
               >
-                <Icon size={13} strokeWidth={2.2} />
-                {t.label}
+                <TypeIcon type={t.value} size={13} color={active ? tone.fg : "#7A7A6E"} />
+                {t.tagLabel}
                 <span style={styles.chipCount}>{typeCounts[t.value]}</span>
               </button>
             );
@@ -731,17 +751,15 @@ export default function MedicineCabinet() {
                   <div style={styles.cardTop}>
                     <div>
                       <div style={styles.nameRow}>
-                        {g.type === "eye_drops" || g.type === "ear_drops" ? (
-                          <Droplet size={14} color="#5C8A8E" strokeWidth={2.2} />
-                        ) : g.type === "liquid_oral" ? (
-                          <GlassWater size={14} color="#5C8A8E" strokeWidth={2.2} />
-                        ) : g.type === "injection" ? (
-                          <Syringe size={14} color="#5C8A8E" strokeWidth={2.2} />
-                        ) : null}
+                        <TypeIcon type={g.type} color={TYPE_TONES[g.type]?.fg || "#5C5C54"} />
                         <h3 style={styles.medName}>{g.name}</h3>
-                        {g.type && g.type !== "drug" && (
-                          <span style={styles.typeTag}>{typeLabel(g.type)}</span>
-                        )}
+                        <span style={{
+                          ...styles.typeTag,
+                          background: (TYPE_TONES[g.type] || TYPE_TONES.drug).bg,
+                          color: (TYPE_TONES[g.type] || TYPE_TONES.drug).fg,
+                        }}>
+                          {tagLabel(g.type)}
+                        </span>
                       </div>
                       <div style={styles.medMeta}>
                         <div style={styles.medMetaPrimary}>
