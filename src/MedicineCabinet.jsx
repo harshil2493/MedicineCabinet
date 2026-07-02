@@ -1427,8 +1427,10 @@ const styles = {
   },
   medMetaSecondary: {
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: 11.5,
-    color: "#9B9B90",
+    fontSize: 13.5,
+    fontWeight: 500,
+    color: "#3D3D34",
+    marginTop: 2,
   },
   medCondition: { margin: "8px 0 0", fontSize: 13.5, color: "#615F53" },
   badgeRow: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 },
