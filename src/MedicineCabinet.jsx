@@ -507,6 +507,28 @@ export default function MedicineCabinet() {
           from { transform: translateY(12px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }
         }
+        @media (max-width: 640px) {
+          .med-title { font-size: 20px !important; }
+          .med-today { font-size: 15px !important; }
+          .med-header-actions { width: 100%; justify-content: flex-end; }
+          .med-controls { flex-wrap: wrap; }
+          .med-controls .med-search { flex: 1 1 100%; min-width: 0; }
+          .med-controls .med-sort,
+          .med-controls .med-export { flex: 1 1 auto; }
+          .med-form-row { flex-direction: column !important; gap: 12px !important; }
+          .med-modal { max-width: 100% !important; border-radius: 14px 14px 0 0 !important; padding: 16px !important; }
+          .med-batch-row,
+          .med-batch-head {
+            grid-template-columns: 1fr auto !important;
+            gap: 8px !important;
+          }
+          .med-batch-head > span:nth-child(2),
+          .med-batch-row > .med-batch-qty { grid-column: 1 / -1; padding-left: 0; color: #7A7A6E; }
+          .med-detail-grid { gap: 12px !important; }
+          .med-stat-card { flex: 1 1 auto; }
+          .med-name-input-row { flex-wrap: wrap; }
+          .med-name-input-row > button { flex: 0 0 auto; }
+        }
       `}</style>
 
       <header style={styles.header}>
@@ -517,11 +539,11 @@ export default function MedicineCabinet() {
               <HeartPulse size={12} color="#F6F5F1" strokeWidth={2.5} style={styles.brandAccent} />
             </div>
             <div>
-              <h1 style={styles.title}>Harshil's Medicine Cabinet</h1>
-              <p style={styles.today}>{todayLabel}</p>
+              <h1 className="med-title" style={styles.title}>Harshil's Medicine Cabinet</h1>
+              <p className="med-today" style={styles.today}>{todayLabel}</p>
             </div>
           </div>
-          <div style={styles.headerActions}>
+          <div className="med-header-actions" style={styles.headerActions}>
             {canEdit ? (
               <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
                 <Plus size={16} strokeWidth={2.5} /> Add medicine
@@ -546,7 +568,7 @@ export default function MedicineCabinet() {
         <div style={styles.statRow}>
           <button
             type="button"
-            className="med-btn"
+            className="med-btn med-stat-card"
             onClick={() => setViewFilter("all")}
             style={{
               ...styles.statCard,
@@ -558,7 +580,7 @@ export default function MedicineCabinet() {
           </button>
           <button
             type="button"
-            className="med-btn"
+            className="med-btn med-stat-card"
             onClick={() => setViewFilter("attention")}
             style={{
               ...styles.statCard,
@@ -652,8 +674,8 @@ export default function MedicineCabinet() {
         </section>
       )}
 
-      <div style={styles.controls}>
-        <div style={styles.searchBox}>
+      <div className="med-controls" style={styles.controls}>
+        <div className="med-search" style={styles.searchBox}>
           <Search size={15} color="#8A8A7F" />
           <input
             className="med-input"
@@ -664,7 +686,7 @@ export default function MedicineCabinet() {
           />
         </div>
         <select
-          className="med-select"
+          className="med-select med-sort"
           value={sortMode}
           onChange={(e) => setSortMode(e.target.value)}
           style={styles.sortSelect}
@@ -675,7 +697,7 @@ export default function MedicineCabinet() {
         </select>
         <button
           type="button"
-          className="med-btn"
+          className="med-btn med-export"
           onClick={() => downloadCSV(meds)}
           disabled={!meds.length}
           style={{ ...styles.exportBtn, opacity: meds.length ? 1 : 0.5, cursor: meds.length ? "pointer" : "default" }}
@@ -814,7 +836,7 @@ export default function MedicineCabinet() {
                       <p style={styles.dosageLine}><strong>Dosage: </strong>{g.dosage}</p>
                     )}
                     <div style={styles.batchTable}>
-                      <div style={styles.batchHead}>
+                      <div className="med-batch-head" style={styles.batchHead}>
                         <span>Expires</span>
                         <span>Quantity</span>
                         <span></span>
@@ -823,14 +845,14 @@ export default function MedicineCabinet() {
                         const bs = statusFor(b.expiryDate, settings.expiryDays);
                         const bt = toneStyles[bs.tone];
                         return (
-                          <div key={b.id} style={styles.batchRow}>
+                          <div key={b.id} className="med-batch-row" style={styles.batchRow}>
                             <span style={styles.batchExpiry}>
                               {formatMonthYear(b.expiryDate) || "—"}
                               <span style={{ ...styles.batchStatus, color: bt.fg, background: bt.bg }}>
                                 {bs.label}
                               </span>
                             </span>
-                            <span style={styles.batchQty}>
+                            <span className="med-batch-qty" style={styles.batchQty}>
                               {b.quantity || "—"}
                               {b.volumeMl && (
                                 <span style={styles.batchVolume}> · {b.volumeMl} mL</span>
@@ -873,7 +895,7 @@ export default function MedicineCabinet() {
             <form onSubmit={submitForm} style={styles.form}>
               <label style={{ ...styles.label, position: "relative" }}>
                 Name
-                <div style={styles.nameInputRow}>
+                <div className="med-name-input-row" style={styles.nameInputRow}>
                   <input
                     className="med-input"
                     required
@@ -967,7 +989,7 @@ export default function MedicineCabinet() {
                   ))}
                 </select>
               </label>
-              <div style={styles.formRow}>
+              <div className="med-form-row" style={styles.formRow}>
                 <label style={{ ...styles.label, flex: 1 }}>
                   Strength <span style={styles.optionalTag}>optional</span>
                   <input
@@ -991,7 +1013,7 @@ export default function MedicineCabinet() {
               </div>
 
               {lookupError && <p style={styles.lookupError}>{lookupError}</p>}
-              <div style={styles.formRow}>
+              <div className="med-form-row" style={styles.formRow}>
                 <label style={{ ...styles.label, flex: 2 }}>
                   What it's for
                   <input
