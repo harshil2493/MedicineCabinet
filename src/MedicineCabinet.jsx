@@ -181,6 +181,7 @@ export default function MedicineCabinet() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [showSettings, setShowSettings] = useState(false);
   const [viewFilter, setViewFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
@@ -425,6 +426,9 @@ export default function MedicineCabinet() {
     if (viewFilter === "attention") {
       list = list.filter((g) => g.batches.some((b) => attentionIds.has(b.id)));
     }
+    if (typeFilter) {
+      list = list.filter((g) => g.type === typeFilter);
+    }
     const totalQty = (g) => g.batches.reduce((s, b) => {
       const q = parseQuantity(b.quantity);
       return q ? s + q.num : s;
@@ -441,7 +445,15 @@ export default function MedicineCabinet() {
       list = [...list].sort((a, b) => a.name.localeCompare(b.name));
     }
     return list;
-  }, [groups, query, sortMode, viewFilter, attentionIds]);
+  }, [groups, query, sortMode, viewFilter, typeFilter, attentionIds]);
+
+  const typeCounts = useMemo(() => {
+    const counts = {};
+    groups.forEach((g) => {
+      counts[g.type] = (counts[g.type] || 0) + 1;
+    });
+    return counts;
+  }, [groups]);
 
   const pendingIcon = {
     expired: <AlertTriangle size={15} color="#B8433A" strokeWidth={2.2} />,
@@ -627,6 +639,39 @@ export default function MedicineCabinet() {
           Export
         </button>
       </div>
+
+      {Object.keys(typeCounts).length > 1 && (
+        <div style={styles.chipRow}>
+          <button
+            type="button"
+            className="med-btn"
+            onClick={() => setTypeFilter("")}
+            style={{ ...styles.chip, ...(typeFilter === "" ? styles.chipActive : {}) }}
+          >
+            All types
+          </button>
+          {TYPE_OPTIONS.filter((t) => typeCounts[t.value]).map((t) => {
+            const Icon = t.value === "drug" ? Pill
+              : t.value === "liquid_oral" ? GlassWater
+              : t.value === "injection" ? Syringe
+              : Droplet;
+            const active = typeFilter === t.value;
+            return (
+              <button
+                key={t.value}
+                type="button"
+                className="med-btn"
+                onClick={() => setTypeFilter(active ? "" : t.value)}
+                style={{ ...styles.chip, ...(active ? styles.chipActive : {}) }}
+              >
+                <Icon size={13} strokeWidth={2.2} />
+                {t.label}
+                <span style={styles.chipCount}>{typeCounts[t.value]}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {error && <div style={styles.errorBanner}>{error}</div>}
 
@@ -1134,6 +1179,39 @@ const styles = {
     background: "#FFFFFF",
     fontFamily: "'Inter', sans-serif",
     color: "#5C5C54",
+  },
+  chipRow: {
+    maxWidth: 720,
+    margin: "12px auto 0",
+    padding: "0 20px",
+    display: "flex",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  chip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    background: "#FFFFFF",
+    border: "1px solid #E4E1D4",
+    borderRadius: 20,
+    padding: "6px 12px",
+    fontSize: 12.5,
+    fontFamily: "'Inter', sans-serif",
+    color: "#5C5C54",
+    cursor: "pointer",
+  },
+  chipActive: {
+    background: "#EAF1F1",
+    border: "1px solid #2D6A6E",
+    color: "#2D6A6E",
+    fontWeight: 500,
+  },
+  chipCount: {
+    fontSize: 11,
+    color: "#9B9B90",
+    fontFamily: "'IBM Plex Mono', monospace",
+    marginLeft: 2,
   },
   exportBtn: {
     display: "flex",
