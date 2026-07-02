@@ -512,9 +512,9 @@ export default function MedicineCabinet() {
           .med-today { font-size: 15px !important; }
           .med-header-actions { width: 100%; justify-content: flex-end; }
           .med-controls { flex-wrap: wrap; }
-          .med-controls .med-search { flex: 1 1 100%; min-width: 0; }
+          .med-controls .med-search { flex: 1 1 100% !important; min-width: 0 !important; }
           .med-controls .med-sort,
-          .med-controls .med-export { flex: 1 1 auto; }
+          .med-controls .med-export { flex: 1 1 auto !important; }
           .med-form-row { flex-direction: column !important; gap: 12px !important; }
           .med-modal { max-width: 100% !important; border-radius: 14px 14px 0 0 !important; padding: 16px !important; }
           .med-batch-row,
@@ -782,6 +782,7 @@ export default function MedicineCabinet() {
             return (
               <div key={g.key} className="med-card" style={{ ...styles.card, animation: "slideUp 0.25s ease" }}>
                 <div style={styles.cardTab(tone)} />
+                <div style={styles.cardBody}>
                 <div
                   style={styles.cardMain}
                   onClick={() => setExpandedId(isOpen ? null : g.key)}
@@ -877,6 +878,7 @@ export default function MedicineCabinet() {
                     {g.description && <p style={styles.medDescription}>{g.description}</p>}
                   </div>
                 )}
+                </div>
               </div>
             );
           })
@@ -1392,7 +1394,8 @@ const styles = {
     overflow: "hidden",
   },
   cardTab: (tone) => ({ width: 5, background: tone.dot, flexShrink: 0 }),
-  cardMain: { flex: 1, padding: "14px 16px", cursor: "pointer" },
+  cardBody: { flex: 1, display: "flex", flexDirection: "column", minWidth: 0 },
+  cardMain: { padding: "14px 16px", cursor: "pointer" },
   cardTop: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
   medName: { margin: 0, fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600 },
   nameRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
