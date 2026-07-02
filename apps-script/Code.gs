@@ -1,10 +1,11 @@
 // Google Apps Script backend for MedicineCabinet.
 //
 // Required Script Properties (Project Settings -> Script Properties):
-//   SHEET_ID         the target spreadsheet's ID (from its URL)
-//   APP_PASSWORD     the shared password the frontend must send
-//   GEMINI_API_KEY   (optional) Google AI Studio API key for AI lookup
-//   SHEET_NAME       (optional) worksheet tab name, defaults to "medicines"
+//   SHEET_ID           the target spreadsheet's ID (from its URL)
+//   APP_PASSWORD       admin password (add/edit/remove)
+//   APP_READ_PASSWORD  (optional) read-only password (list + lookup, no mutations)
+//   GEMINI_API_KEY     (optional) Google AI Studio API key for AI lookup
+//   SHEET_NAME         (optional) worksheet tab name, defaults to "medicines"
 //
 // Deploy: Deploy -> New deployment -> Web app
 //   Execute as:      Me
@@ -29,26 +30,30 @@ function doGet(e) {
   return json_({ error: "Use POST" });
 }
 
+var MUTATION_ACTIONS = { replace: true, save_settings: true };
+
 function doPost(e) {
   return handle_(function () {
     var body = JSON.parse(e.postData.contents || "{}");
-    assertPassword_(body.password);
-    if (body.action === "list") return { medicines: readAll_() };
-    if (body.action === "replace") {
+    var role = assertPassword_(body.password);
+    if (MUTATION_ACTIONS[body.action] && role !== "admin") {
+      throw new Error("Read-only session");
+    }
+    var out;
+    if (body.action === "list") out = { medicines: readAll_() };
+    else if (body.action === "replace") {
       replaceAll_(body.medicines || []);
-      return { ok: true, count: body.medicines.length };
+      out = { ok: true, count: body.medicines.length };
     }
-    if (body.action === "lookup") {
-      return lookup_(body.name, body.strength);
-    }
-    if (body.action === "get_settings") {
-      return { settings: readSettings_() };
-    }
-    if (body.action === "save_settings") {
+    else if (body.action === "lookup") out = lookup_(body.name, body.strength);
+    else if (body.action === "get_settings") out = { settings: readSettings_() };
+    else if (body.action === "save_settings") {
       writeSettings_(body.settings || {});
-      return { ok: true };
+      out = { ok: true };
     }
-    throw new Error("Unknown action: " + body.action);
+    else throw new Error("Unknown action: " + body.action);
+    out.role = role;
+    return out;
   });
 }
 
@@ -67,9 +72,14 @@ function json_(obj) {
 }
 
 function assertPassword_(supplied) {
-  var expected = PropertiesService.getScriptProperties().getProperty("APP_PASSWORD");
-  if (!expected) throw new Error("Server not configured: APP_PASSWORD missing");
-  if (!supplied || supplied !== expected) throw new Error("Unauthorized");
+  var props = PropertiesService.getScriptProperties();
+  var admin = props.getProperty("APP_PASSWORD");
+  var reader = props.getProperty("APP_READ_PASSWORD");
+  if (!admin) throw new Error("Server not configured: APP_PASSWORD missing");
+  if (!supplied) throw new Error("Unauthorized");
+  if (supplied === admin) return "admin";
+  if (reader && supplied === reader) return "reader";
+  throw new Error("Unauthorized");
 }
 
 function sheet_() {

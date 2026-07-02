@@ -1,5 +1,6 @@
 const BASE_URL = import.meta.env.VITE_APPS_SCRIPT_URL;
 const PW_KEY = "cabinet_pw";
+const ROLE_KEY = "cabinet_role";
 
 class ApiError extends Error {
   constructor(message, status) {
@@ -14,7 +15,19 @@ export function getPassword() {
 
 export function setPassword(pw) {
   if (pw) sessionStorage.setItem(PW_KEY, pw);
-  else sessionStorage.removeItem(PW_KEY);
+  else {
+    sessionStorage.removeItem(PW_KEY);
+    sessionStorage.removeItem(ROLE_KEY);
+  }
+}
+
+export function getRole() {
+  return sessionStorage.getItem(ROLE_KEY) || "";
+}
+
+function setRole(role) {
+  if (role) sessionStorage.setItem(ROLE_KEY, role);
+  else sessionStorage.removeItem(ROLE_KEY);
 }
 
 async function post(action, extra) {
@@ -44,6 +57,7 @@ async function post(action, extra) {
   if (!res.ok || data?.error) {
     throw new ApiError(data?.error || `HTTP ${res.status}`, res.status);
   }
+  if (data?.role) setRole(data.role);
   return data;
 }
 

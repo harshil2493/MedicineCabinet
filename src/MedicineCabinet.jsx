@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal } from "lucide-react";
 import { storage } from "./storage.js";
-import { lookupMedicine as apiLookup, getSettings, saveSettings } from "./api.js";
+import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole } from "./api.js";
 
 const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2 };
 
@@ -182,6 +182,7 @@ export default function MedicineCabinet() {
   const [showSettings, setShowSettings] = useState(false);
   const [viewFilter, setViewFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("");
+  const canEdit = getRole() !== "reader";
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
@@ -494,9 +495,13 @@ export default function MedicineCabinet() {
               <p style={styles.today}>{todayLabel}</p>
             </div>
           </div>
-          <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
-            <Plus size={16} strokeWidth={2.5} /> Add medicine
-          </button>
+          {canEdit ? (
+            <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
+              <Plus size={16} strokeWidth={2.5} /> Add medicine
+            </button>
+          ) : (
+            <span style={styles.readOnlyTag}>Read only</span>
+          )}
         </div>
 
         <div style={styles.statRow}>
@@ -525,16 +530,18 @@ export default function MedicineCabinet() {
             <span style={styles.statNumber}>{attentionCount}</span>
             <span style={styles.statLabel}>need attention</span>
           </button>
-          <button
-            type="button"
-            className="med-btn"
-            onClick={() => setShowSettings((v) => !v)}
-            style={styles.settingsBtn}
-            title="Attention thresholds"
-            aria-label="Attention thresholds"
-          >
-            <SlidersHorizontal size={16} strokeWidth={2.2} />
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              className="med-btn"
+              onClick={() => setShowSettings((v) => !v)}
+              style={styles.settingsBtn}
+              title="Attention thresholds"
+              aria-label="Attention thresholds"
+            >
+              <SlidersHorizontal size={16} strokeWidth={2.2} />
+            </button>
+          )}
         </div>
 
         {showSettings && (
@@ -686,9 +693,11 @@ export default function MedicineCabinet() {
             <Package size={28} color="#B8B5A8" strokeWidth={1.5} />
             <p style={styles.emptyTitle}>Cabinet's empty</p>
             <p style={styles.emptyBody}>Add the first strip your dad packed for you.</p>
-            <button className="med-btn" onClick={openAdd} style={styles.emptyBtn}>
-              <Plus size={15} /> Add medicine
-            </button>
+            {canEdit && (
+              <button className="med-btn" onClick={openAdd} style={styles.emptyBtn}>
+                <Plus size={15} /> Add medicine
+              </button>
+            )}
           </div>
         ) : filtered.length === 0 ? (
           <div style={styles.emptyState}>
@@ -791,12 +800,16 @@ export default function MedicineCabinet() {
                               )}
                             </span>
                             <span style={styles.batchActions}>
-                              <button className="med-btn" onClick={() => openEdit(b)} style={styles.batchIconBtn} title="Edit batch">
-                                <Edit3 size={13} />
-                              </button>
-                              <button className="med-btn" onClick={() => removeMed(b.id)} style={{ ...styles.batchIconBtn, color: "#B8433A" }} title="Remove batch">
-                                <Trash2 size={13} />
-                              </button>
+                              {canEdit && (
+                                <>
+                                  <button className="med-btn" onClick={() => openEdit(b)} style={styles.batchIconBtn} title="Edit batch">
+                                    <Edit3 size={13} />
+                                  </button>
+                                  <button className="med-btn" onClick={() => removeMed(b.id)} style={{ ...styles.batchIconBtn, color: "#B8433A" }} title="Remove batch">
+                                    <Trash2 size={13} />
+                                  </button>
+                                </>
+                              )}
                             </span>
                           </div>
                         );
@@ -1087,6 +1100,16 @@ const styles = {
     fontWeight: 500,
     cursor: "pointer",
     fontFamily: "'Inter', sans-serif",
+  },
+  readOnlyTag: {
+    fontSize: 11.5,
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "#5C5C54",
+    background: "#F1EEE3",
+    padding: "6px 12px",
+    borderRadius: 20,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
   },
   statRow: { display: "flex", gap: 10, maxWidth: 720, margin: "18px auto 0", flexWrap: "wrap" },
   statCard: {
