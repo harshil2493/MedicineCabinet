@@ -1,6 +1,7 @@
 const BASE_URL = import.meta.env.VITE_APPS_SCRIPT_URL;
 const PW_KEY = "cabinet_pw";
 const ROLE_KEY = "cabinet_role";
+const USER_KEY = "cabinet_user";
 
 class ApiError extends Error {
   constructor(message, status) {
@@ -12,17 +13,22 @@ class ApiError extends Error {
 export function getPassword() {
   return sessionStorage.getItem(PW_KEY) || "";
 }
-
-export function setPassword(pw) {
-  if (pw) sessionStorage.setItem(PW_KEY, pw);
-  else {
-    sessionStorage.removeItem(PW_KEY);
-    sessionStorage.removeItem(ROLE_KEY);
-  }
+export function getUsername() {
+  return sessionStorage.getItem(USER_KEY) || "";
 }
-
 export function getRole() {
   return sessionStorage.getItem(ROLE_KEY) || "";
+}
+
+export function setCredentials(username, password) {
+  sessionStorage.setItem(USER_KEY, username || "");
+  sessionStorage.setItem(PW_KEY, password || "");
+}
+
+export function clearCredentials() {
+  sessionStorage.removeItem(USER_KEY);
+  sessionStorage.removeItem(PW_KEY);
+  sessionStorage.removeItem(ROLE_KEY);
 }
 
 function setRole(role) {
@@ -30,16 +36,21 @@ function setRole(role) {
   else sessionStorage.removeItem(ROLE_KEY);
 }
 
+function setUsernameFromServer(name) {
+  if (name) sessionStorage.setItem(USER_KEY, name);
+}
+
 async function post(action, extra) {
   if (!BASE_URL) throw new ApiError("VITE_APPS_SCRIPT_URL is not set", 0);
   const password = getPassword();
   if (!password) throw new ApiError("Unauthorized", 401);
+  const username = getUsername();
 
   const res = await fetch(BASE_URL, {
     method: "POST",
     // text/plain avoids a CORS preflight (Apps Script Web Apps don't answer OPTIONS)
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, password, ...extra }),
+    body: JSON.stringify({ action, username, password, ...extra }),
     redirect: "follow",
   });
 
@@ -51,13 +62,14 @@ async function post(action, extra) {
   }
 
   if (data?.error === "Unauthorized") {
-    setPassword("");
-    throw new ApiError("Wrong password", 401);
+    clearCredentials();
+    throw new ApiError("Wrong username or password", 401);
   }
   if (!res.ok || data?.error) {
     throw new ApiError(data?.error || `HTTP ${res.status}`, res.status);
   }
   if (data?.role) setRole(data.role);
+  if (data?.username) setUsernameFromServer(data.username);
   return data;
 }
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal } from "lucide-react";
+import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal, LogOut } from "lucide-react";
 import { storage } from "./storage.js";
-import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole } from "./api.js";
+import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole, getUsername, clearCredentials } from "./api.js";
 
 const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2 };
 
@@ -203,6 +203,12 @@ export default function MedicineCabinet() {
   const [viewFilter, setViewFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("");
   const canEdit = getRole() !== "reader";
+  const username = getUsername();
+
+  function logout() {
+    clearCredentials();
+    window.location.reload();
+  }
   const [lookingUp, setLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
@@ -515,13 +521,26 @@ export default function MedicineCabinet() {
               <p style={styles.today}>{todayLabel}</p>
             </div>
           </div>
-          {canEdit ? (
-            <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
-              <Plus size={16} strokeWidth={2.5} /> Add medicine
+          <div style={styles.headerActions}>
+            {canEdit ? (
+              <button className="med-btn" onClick={openAdd} style={styles.addBtn}>
+                <Plus size={16} strokeWidth={2.5} /> Add medicine
+              </button>
+            ) : (
+              <span style={styles.readOnlyTag}>Read only</span>
+            )}
+            <button
+              type="button"
+              className="med-btn"
+              onClick={logout}
+              style={styles.logoutBtn}
+              title={username ? `Signed in as ${username} · Log out` : "Log out"}
+              aria-label="Log out"
+            >
+              <LogOut size={14} strokeWidth={2.2} />
+              {username && <span style={styles.logoutName}>{username}</span>}
             </button>
-          ) : (
-            <span style={styles.readOnlyTag}>Read only</span>
-          )}
+          </div>
         </div>
 
         <div style={styles.statRow}>
@@ -1118,6 +1137,30 @@ const styles = {
     fontWeight: 500,
     cursor: "pointer",
     fontFamily: "'Inter', sans-serif",
+  },
+  headerActions: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  logoutBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#FFFFFF",
+    border: "1px solid #E4E1D4",
+    borderRadius: 10,
+    padding: "9px 12px",
+    fontSize: 13,
+    color: "#5C5C54",
+    cursor: "pointer",
+    fontFamily: "'Inter', sans-serif",
+  },
+  logoutName: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: 12,
+    color: "#3D3D34",
   },
   readOnlyTag: {
     fontSize: 11.5,

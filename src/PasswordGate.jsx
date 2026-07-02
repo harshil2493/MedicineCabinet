@@ -1,25 +1,30 @@
 import { useState } from "react";
 import { Pill } from "lucide-react";
-import { getPassword, setPassword, listMedicines } from "./api.js";
+import { getPassword, setCredentials, clearCredentials, listMedicines } from "./api.js";
 
 export default function PasswordGate({ children }) {
   const [hasPw, setHasPw] = useState(Boolean(getPassword()));
-  const [input, setInput] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(e) {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!password.trim()) return;
     setBusy(true);
     setError("");
-    setPassword(input.trim());
+    setCredentials(username.trim(), password.trim());
     try {
       await listMedicines();
       setHasPw(true);
     } catch (err) {
-      setPassword("");
-      setError(err?.status === 401 ? "Wrong password" : (err?.message || "Couldn't reach the server"));
+      clearCredentials();
+      setError(
+        err?.status === 401
+          ? "Wrong username or password"
+          : (err?.message || "Couldn't reach the server")
+      );
     } finally {
       setBusy(false);
     }
@@ -34,16 +39,25 @@ export default function PasswordGate({ children }) {
           <Pill size={22} color="#F6F5F1" strokeWidth={2.2} />
         </div>
         <h1 style={styles.title}>Harshil's Medicine Cabinet</h1>
-        <p style={styles.subtitle}>Enter your cabinet password.</p>
+        <p style={styles.subtitle}>Sign in to open the cabinet.</p>
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
+          autoComplete="username"
+          style={styles.input}
+          placeholder="username"
+        />
         <input
           type="password"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password"
           style={styles.input}
           placeholder="password"
         />
-        <button type="submit" disabled={busy || !input.trim()} style={styles.btn}>
+        <button type="submit" disabled={busy || !password.trim()} style={styles.btn}>
           {busy ? "Checking…" : "Unlock"}
         </button>
         {error && <p style={styles.error}>{error}</p>}

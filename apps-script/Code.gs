@@ -2,8 +2,11 @@
 //
 // Required Script Properties (Project Settings -> Script Properties):
 //   SHEET_ID           the target spreadsheet's ID (from its URL)
-//   APP_PASSWORD       admin password (add/edit/remove)
-//   APP_READ_PASSWORD  (optional) read-only password (list + lookup, no mutations)
+//   USERS_JSON         (recommended) JSON of users. Example:
+//     {"harshil":{"password":"s3cret","role":"admin"},
+//      "guest":{"password":"peek","role":"reader"}}
+//   APP_PASSWORD       (legacy fallback) admin password if USERS_JSON not set
+//   APP_READ_PASSWORD  (legacy fallback) reader password if USERS_JSON not set
 //   GEMINI_API_KEY     (optional) Google AI Studio API key for AI lookup
 //   SHEET_NAME         (optional) worksheet tab name, defaults to "medicines"
 //
@@ -35,8 +38,8 @@ var MUTATION_ACTIONS = { replace: true, save_settings: true };
 function doPost(e) {
   return handle_(function () {
     var body = JSON.parse(e.postData.contents || "{}");
-    var role = assertPassword_(body.password);
-    if (MUTATION_ACTIONS[body.action] && role !== "admin") {
+    var auth = authenticate_(body.username, body.password);
+    if (MUTATION_ACTIONS[body.action] && auth.role !== "admin") {
       throw new Error("Read-only session");
     }
     var out;
@@ -52,7 +55,8 @@ function doPost(e) {
       out = { ok: true };
     }
     else throw new Error("Unknown action: " + body.action);
-    out.role = role;
+    out.role = auth.role;
+    out.username = auth.username;
     return out;
   });
 }
@@ -71,14 +75,27 @@ function json_(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function assertPassword_(supplied) {
+function authenticate_(username, password) {
   var props = PropertiesService.getScriptProperties();
+  if (!password) throw new Error("Password required");
+
+  var usersJson = props.getProperty("USERS_JSON");
+  if (usersJson) {
+    var users;
+    try { users = JSON.parse(usersJson); }
+    catch (e) { throw new Error("USERS_JSON is not valid JSON"); }
+    if (!username) throw new Error("Username required");
+    var u = users[username];
+    if (!u || u.password !== password) throw new Error("Unauthorized");
+    return { username: username, role: u.role === "admin" ? "admin" : "reader" };
+  }
+
+  // Legacy fallback: single admin/reader password, username ignored.
   var admin = props.getProperty("APP_PASSWORD");
   var reader = props.getProperty("APP_READ_PASSWORD");
-  if (!admin) throw new Error("Server not configured: APP_PASSWORD missing");
-  if (!supplied) throw new Error("Unauthorized");
-  if (supplied === admin) return "admin";
-  if (reader && supplied === reader) return "reader";
+  if (!admin) throw new Error("Server not configured: set USERS_JSON or APP_PASSWORD");
+  if (password === admin) return { username: username || "admin", role: "admin" };
+  if (reader && password === reader) return { username: username || "guest", role: "reader" };
   throw new Error("Unauthorized");
 }
 
