@@ -166,7 +166,7 @@ function lookup_(name, strength) {
     'For the medicine "' + name + '"' +
     (strength ? ' (' + strength + ')' : '') +
     ', return JSON with exactly six fields:\n' +
-    '- "type": one of "drug", "liquid_oral", "injection", "eye_drops", "ear_drops". Pick "drug" for tablets/capsules/pills.\n' +
+    '- "type": one of "drug", "liquid_oral", "injection", "eye_drops", "ear_drops", "cream", "powder". Pick "drug" for tablets/capsules/pills. Pick "cream" for topical creams, ointments, gels, balms. Pick "powder" for oral rehydration salts, protein powders, powder sachets.\n' +
     '- "strength": most common strength/concentration if inferable from the name (e.g. "500 mg", "5 mg/mL"). Empty string if already in the name or unknown.\n' +
     '- "dosage": typical adult dosage with timing/frequency (e.g. "1 tablet twice daily, after meals" or "10 ml at bedtime"). Use plain English. If dosage varies widely, give the most common adult regimen.\n' +
     '- "volumeMl": typical bottle/vial volume in mL as a plain number string (e.g. "10", "60"). Only for non-drug types. Return empty string for "drug" or if unknown.\n' +
@@ -185,7 +185,7 @@ function lookup_(name, strength) {
       responseSchema: {
         type: "OBJECT",
         properties: {
-          type: { type: "STRING", enum: ["drug", "liquid_oral", "injection", "eye_drops", "ear_drops"] },
+          type: { type: "STRING", enum: ["drug", "liquid_oral", "injection", "eye_drops", "ear_drops", "cream", "powder"] },
           strength: { type: "STRING" },
           dosage: { type: "STRING" },
           volumeMl: { type: "STRING" },

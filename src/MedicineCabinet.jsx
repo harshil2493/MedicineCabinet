@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal, LogOut } from "lucide-react";
+import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal, LogOut, Container } from "lucide-react";
 import { storage } from "./storage.js";
 import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole, getUsername, clearCredentials } from "./api.js";
 
@@ -71,6 +71,8 @@ const TYPE_OPTIONS = [
   { value: "injection", label: "Injection", tagLabel: "Injection" },
   { value: "eye_drops", label: "Eye drops", tagLabel: "Eye drops" },
   { value: "ear_drops", label: "Ear drops", tagLabel: "Ear drops" },
+  { value: "cream", label: "Cream / ointment", tagLabel: "Cream" },
+  { value: "powder", label: "Powder / sachet", tagLabel: "Powder" },
 ];
 
 function typeLabel(type) {
@@ -87,6 +89,8 @@ const TYPE_TONES = {
   injection:   { bg: "#F4DDD9", fg: "#A0554C" }, // muted red
   eye_drops:   { bg: "#DFEAE1", fg: "#517062" }, // sage
   ear_drops:   { bg: "#E8DFEC", fg: "#6E5980" }, // muted purple
+  cream:       { bg: "#F4E4D9", fg: "#8B5E3C" }, // warm peach / brown
+  powder:      { bg: "#F0EBD4", fg: "#7A6E45" }, // soft mustard
 };
 
 function TypeIcon({ type, size = 14, color }) {
@@ -94,6 +98,8 @@ function TypeIcon({ type, size = 14, color }) {
   if (type === "eye_drops" || type === "ear_drops") return <Droplet {...props} />;
   if (type === "liquid_oral") return <GlassWater {...props} />;
   if (type === "injection") return <Syringe {...props} />;
+  if (type === "cream") return <Container {...props} />;
+  if (type === "powder") return <Package {...props} />;
   return <Pill {...props} />;
 }
 
@@ -856,7 +862,7 @@ export default function MedicineCabinet() {
                             <span className="med-batch-qty" style={styles.batchQty}>
                               {b.quantity || "—"}
                               {b.volumeMl && (
-                                <span style={styles.batchVolume}> · {b.volumeMl} mL</span>
+                                <span style={styles.batchVolume}> · {b.volumeMl} {(g.type === "cream" || g.type === "powder") ? "g" : "mL"}</span>
                               )}
                             </span>
                             <span style={styles.batchActions}>
@@ -1039,7 +1045,8 @@ export default function MedicineCabinet() {
               </div>
               {isLiquidType(form.type) && (
                 <label style={styles.label}>
-                  Volume per unit (mL) <span style={styles.optionalTag}>optional</span>
+                  {(form.type === "cream" || form.type === "powder") ? "Size per tube (g)" : "Volume per unit (mL)"}
+                  <span style={styles.optionalTag}>optional</span>
                   <input
                     className="med-input"
                     type="number"
@@ -1047,7 +1054,7 @@ export default function MedicineCabinet() {
                     step="any"
                     value={form.volumeMl}
                     onChange={(e) => setForm({ ...form, volumeMl: e.target.value })}
-                    placeholder="e.g. 10 for eye drops, 60 for syrup"
+                    placeholder={(form.type === "cream" || form.type === "powder") ? "e.g. 30 or 50" : "e.g. 10 for eye drops, 60 for syrup"}
                     style={styles.formInput}
                   />
                 </label>
