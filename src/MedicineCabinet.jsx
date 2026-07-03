@@ -392,39 +392,64 @@ export default function MedicineCabinet() {
 
   const pendingItems = useMemo(() => {
     const items = [];
+
+    // Sum unexpired quantity per group so the "running low" check uses total
+    // unexpired stock, not per-batch. Also tracks the group's display info.
+    const unexpiredByGroup = new Map();
+    const groupInfo = new Map();
+    meds.forEach((m) => {
+      const key = groupKey(m);
+      if (!groupInfo.has(key)) {
+        groupInfo.set(key, { name: m.name, type: m.type || "drug" });
+      }
+      const days = daysUntil(m.expiryDate);
+      const isExpired = days !== null && days < 0;
+      const q = parseQuantity(m.quantity);
+      if (q && !isExpired) {
+        unexpiredByGroup.set(key, (unexpiredByGroup.get(key) || 0) + q.num);
+      }
+    });
+
+    // Per-batch expiry callouts — each expiring batch still deserves its own line
     meds.forEach((m) => {
       const status = statusFor(m.expiryDate, settings.expiryDays);
+      const gKey = groupKey(m);
       if (status.tone === "expired") {
         items.push({
-          medId: m.id,
+          groupKey: gKey,
           rank: 0,
           icon: "expired",
           text: `${m.name} expired ${Math.abs(status.d)}d ago — safe to discard, ask Dad for a fresh one`,
         });
       } else if (status.tone === "soon") {
         items.push({
-          medId: m.id,
+          groupKey: gKey,
           rank: 1,
           icon: "soon",
           text: `${m.name} expires in ${status.d}d — worth restocking soon`,
         });
       }
-      const q = parseQuantity(m.quantity);
-      const threshold = lowThresholdFor(m.type, settings);
-      if (q && q.num <= threshold) {
+    });
+
+    // Per-group low-quantity — only counts unexpired stock
+    groupInfo.forEach((info, key) => {
+      const total = unexpiredByGroup.get(key) || 0;
+      const threshold = lowThresholdFor(info.type, settings);
+      if (total > 0 && total <= threshold) {
         items.push({
-          medId: m.id,
+          groupKey: key,
           rank: 2,
           icon: "low",
-          text: `${m.name} is down to ${m.quantity} — running low`,
+          text: `${info.name} is down to ${total} unexpired — running low`,
         });
       }
     });
+
     return items.sort((a, b) => a.rank - b.rank);
   }, [meds, settings]);
 
   const attentionIds = useMemo(
-    () => new Set(pendingItems.map((p) => p.medId)),
+    () => new Set(pendingItems.map((p) => p.groupKey)),
     [pendingItems]
   );
 
@@ -486,7 +511,7 @@ export default function MedicineCabinet() {
       );
     });
     if (viewFilter === "attention") {
-      list = list.filter((g) => g.batches.some((b) => attentionIds.has(b.id)));
+      list = list.filter((g) => attentionIds.has(g.key));
     }
     if (typeFilter) {
       list = list.filter((g) => g.type === typeFilter);
@@ -709,12 +734,12 @@ export default function MedicineCabinet() {
           <div style={styles.pendingList}>
             {pendingItems.map((item, i) => (
               <div
-                key={item.medId + item.icon + i}
+                key={item.groupKey + item.icon + i}
                 style={styles.pendingItem}
-                onClick={() => setExpandedId(item.medId)}
+                onClick={() => setExpandedId(item.groupKey)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && setExpandedId(item.medId)}
+                onKeyDown={(e) => e.key === "Enter" && setExpandedId(item.groupKey)}
               >
                 {pendingIcon[item.icon]}
                 <span style={styles.pendingText}>{item.text}</span>
