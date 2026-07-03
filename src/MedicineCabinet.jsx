@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal, LogOut, Container } from "lucide-react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, Sparkles, Droplet, Syringe, GlassWater, AlertTriangle, Clock, PackageMinus, HeartPulse, Download, SlidersHorizontal, LogOut, Container, Minus, Undo2 } from "lucide-react";
 import { storage } from "./storage.js";
 import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole, getUsername, clearCredentials } from "./api.js";
 
@@ -216,6 +216,23 @@ export default function MedicineCabinet() {
   const canEdit = getRole() !== "reader";
   const username = getUsername();
 
+  const [undo, setUndo] = useState(null); // { snapshot, label } | null
+  const undoTimerRef = useRef(null);
+
+  function captureUndo(prevMeds, label) {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndo({ snapshot: prevMeds, label });
+    undoTimerRef.current = setTimeout(() => setUndo(null), 6000);
+  }
+
+  function performUndo() {
+    if (!undo) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    const snap = undo.snapshot;
+    setUndo(null);
+    persist(snap); // no label → doesn't re-capture
+  }
+
   function logout() {
     clearCredentials();
     window.location.reload();
@@ -261,8 +278,10 @@ export default function MedicineCabinet() {
     }
   }
 
-  async function persist(next) {
+  async function persist(next, undoLabel) {
+    const prev = meds;
     setMeds(next);
+    if (undoLabel) captureUndo(prev, undoLabel);
     try {
       const result = await storage.set("medicines", JSON.stringify(next));
       if (!result) setError("Couldn't save. Try again.");
@@ -333,23 +352,24 @@ export default function MedicineCabinet() {
     e.preventDefault();
     if (!form.name.trim()) return;
     if (editingId) {
-      persist(meds.map((m) => (m.id === editingId ? { ...form, id: editingId } : m)));
+      persist(
+        meds.map((m) => (m.id === editingId ? { ...form, id: editingId } : m)),
+        `Updated ${form.name}`
+      );
     } else {
       const existing = meds.find((m) => isDuplicate(m, form));
       if (existing) {
         persist(
           meds.map((m) =>
             m.id === existing.id
-              ? {
-                  ...m,
-                  quantity: mergeQuantities(m.quantity, form.quantity),
-                }
+              ? { ...m, quantity: mergeQuantities(m.quantity, form.quantity) }
               : m
-          )
+          ),
+          `Merged into ${existing.name}`
         );
       } else {
         const newMed = { ...form, id: Date.now().toString(36) + Math.random().toString(36).slice(2) };
-        persist([...meds, newMed]);
+        persist([...meds, newMed], `Added ${form.name}`);
       }
     }
     closeForm();
@@ -360,7 +380,21 @@ export default function MedicineCabinet() {
     if (!med) return;
     const ok = window.confirm(`Remove "${med.name}" from the cabinet?`);
     if (!ok) return;
-    persist(meds.filter((m) => m.id !== id));
+    persist(meds.filter((m) => m.id !== id), `Removed ${med.name}`);
+  }
+
+  function decrementBatch(id) {
+    const target = meds.find((m) => m.id === id);
+    if (!target) return;
+    const q = parseQuantity(target.quantity);
+    if (!q) return;
+    const newNum = Math.max(0, q.num - 1);
+    const rounded = Number.isInteger(newNum) ? newNum : Number(newNum.toFixed(2));
+    const newQty = q.unit ? `${rounded} ${q.unit}` : String(rounded);
+    persist(
+      meds.map((m) => (m.id === id ? { ...m, quantity: newQty } : m)),
+      `Took 1 · ${target.name}`
+    );
   }
 
   const nameSuggestions = useMemo(() => {
@@ -1011,6 +1045,16 @@ export default function MedicineCabinet() {
                             <span style={styles.batchActions}>
                               {canEdit && (
                                 <>
+                                  {parseQuantity(b.quantity) && (
+                                    <button
+                                      className="med-btn"
+                                      onClick={() => decrementBatch(b.id)}
+                                      style={styles.batchIconBtn}
+                                      title="Take one (−1)"
+                                    >
+                                      <Minus size={13} />
+                                    </button>
+                                  )}
                                   <button className="med-btn" onClick={() => openEdit(b)} style={styles.batchIconBtn} title="Edit batch">
                                     <Edit3 size={13} />
                                   </button>
@@ -1249,6 +1293,27 @@ export default function MedicineCabinet() {
               </button>
             </form>
           </div>
+        </div>
+      )}
+
+      {undo && (
+        <div style={styles.toast} role="status">
+          <span style={styles.toastLabel}>{undo.label}</span>
+          <button type="button" className="med-btn" onClick={performUndo} style={styles.toastUndoBtn}>
+            <Undo2 size={13} /> Undo
+          </button>
+          <button
+            type="button"
+            className="med-btn"
+            onClick={() => {
+              if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+              setUndo(null);
+            }}
+            style={styles.toastDismiss}
+            aria-label="Dismiss"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
     </div>
@@ -1890,6 +1955,54 @@ const styles = {
     flexShrink: 0,
   },
   lookupError: { fontSize: 12, color: "#B8433A", margin: "-4px 0 0" },
+  toast: {
+    position: "fixed",
+    left: "50%",
+    bottom: 20,
+    transform: "translateX(-50%)",
+    background: "#26261F",
+    color: "#F6F5F1",
+    borderRadius: 12,
+    padding: "10px 12px 10px 16px",
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    fontSize: 13.5,
+    fontFamily: "'Inter', sans-serif",
+    boxShadow: "0 6px 20px rgba(0,0,0,0.25)",
+    zIndex: 60,
+    maxWidth: "min(92vw, 440px)",
+    animation: "slideUp 0.2s ease",
+  },
+  toastLabel: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  toastUndoBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: 5,
+    background: "transparent",
+    color: "#7FC4C8",
+    border: "1px solid #7FC4C8",
+    borderRadius: 8,
+    padding: "5px 10px",
+    fontSize: 12.5,
+    fontFamily: "'Inter', sans-serif",
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  toastDismiss: {
+    background: "transparent",
+    border: "none",
+    color: "#9B9B90",
+    cursor: "pointer",
+    padding: 4,
+    display: "flex",
+  },
   submitBtn: {
     marginTop: 6,
     background: "#2D6A6E",
