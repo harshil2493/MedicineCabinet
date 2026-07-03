@@ -3,7 +3,7 @@ import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, S
 import { storage } from "./storage.js";
 import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole, getUsername, clearCredentials } from "./api.js";
 
-const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2, miscBox: "" };
+const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2, miscBox: "", boxLabels: "" };
 
 function lowThresholdFor(type, settings) {
   return (type || "drug") === "drug" ? settings.lowPill : settings.lowLiquid;
@@ -454,6 +454,12 @@ export default function MedicineCabinet() {
   );
 
   const boxSuggestions = useMemo(() => {
+    const configured = String(settings.boxLabels || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (configured.length) return configured;
+    // Fallback: labels already in use + unused numbers 1-30
     const existing = new Set();
     meds.forEach((m) => { if (m.box) existing.add(String(m.box)); });
     const numeric = [];
@@ -461,9 +467,8 @@ export default function MedicineCabinet() {
       const s = String(i);
       if (!existing.has(s)) numeric.push(s);
     }
-    // Existing first (with counts), then unused numbered boxes
     return [...existing, ...numeric];
-  }, [meds]);
+  }, [meds, settings.boxLabels]);
 
   const groups = useMemo(() => {
     const map = new Map();
@@ -713,13 +718,23 @@ export default function MedicineCabinet() {
                   <span style={styles.settingsUnit}>or fewer</span>
                 </div>
               </label>
+              <label style={{ ...styles.settingsLabel, flex: "1 1 100%" }}>
+                Your box labels <span style={styles.optionalTag}>comma-separated · AI picks from this list only</span>
+                <input
+                  type="text"
+                  value={settings.boxLabels}
+                  onChange={(e) => updateSettings({ boxLabels: e.target.value })}
+                  placeholder='e.g. "First aid, Bathroom, Kitchen, Nightstand, Misc"'
+                  style={{ ...styles.settingsInput, width: "100%", fontFamily: "'Inter', sans-serif" }}
+                />
+              </label>
               <label style={{ ...styles.settingsLabel, flex: "1 1 240px" }}>
-                Miscellaneous box <span style={styles.optionalTag}>AI uses this for oddballs</span>
+                Miscellaneous box <span style={styles.optionalTag}>fallback for oddballs</span>
                 <input
                   type="text"
                   value={settings.miscBox}
                   onChange={(e) => updateSettings({ miscBox: e.target.value })}
-                  placeholder='e.g. "Misc" or "30"'
+                  placeholder='e.g. "Misc"'
                   style={{ ...styles.settingsInput, width: "100%", fontFamily: "'Inter', sans-serif" }}
                 />
               </label>
