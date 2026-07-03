@@ -684,9 +684,8 @@ export default function MedicineCabinet() {
                 <div style={styles.settingsInputWrap}>
                   <input
                     type="number"
-                    min={1}
                     value={settings.expiryDays}
-                    onChange={(e) => updateSettings({ expiryDays: Math.max(1, Number(e.target.value) || 1) })}
+                    onChange={(e) => updateSettings({ expiryDays: Number(e.target.value) || 0 })}
                     style={styles.settingsInput}
                   />
                   <span style={styles.settingsUnit}>days</span>
