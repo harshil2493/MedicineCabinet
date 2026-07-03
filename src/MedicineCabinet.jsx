@@ -3,7 +3,7 @@ import { Plus, X, Pill, Calendar, Package, ChevronDown, Search, Trash2, Edit3, S
 import { storage } from "./storage.js";
 import { lookupMedicine as apiLookup, getSettings, saveSettings, getRole, getUsername, clearCredentials } from "./api.js";
 
-const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2 };
+const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2, miscBox: "" };
 
 function lowThresholdFor(type, settings) {
   return (type || "drug") === "drug" ? settings.lowPill : settings.lowLiquid;
@@ -133,14 +133,15 @@ function mergeQuantities(a, b) {
 // Normalizes a field for duplicate comparison
 const norm = (v) => (v || "").trim().toLowerCase();
 
-// Same batch = same name + type + strength + expiry. Merge quantities on save.
-// Different expiry with same name/type/strength → separate batch in the same group.
+// Same batch = same name + type + strength + expiry + box. Merge quantities on save.
+// Different box (or expiry) with same name/type/strength → separate row in the same group.
 function isDuplicate(a, b) {
   return (
     norm(a.name) === norm(b.name) &&
     norm(a.type || "drug") === norm(b.type || "drug") &&
     norm(a.strength) === norm(b.strength) &&
-    norm(a.expiryDate) === norm(b.expiryDate)
+    norm(a.expiryDate) === norm(b.expiryDate) &&
+    norm(a.box) === norm(b.box)
   );
 }
 
@@ -427,6 +428,18 @@ export default function MedicineCabinet() {
     [pendingItems]
   );
 
+  const boxSuggestions = useMemo(() => {
+    const existing = new Set();
+    meds.forEach((m) => { if (m.box) existing.add(String(m.box)); });
+    const numeric = [];
+    for (let i = 1; i <= BOX_COUNT; i++) {
+      const s = String(i);
+      if (!existing.has(s)) numeric.push(s);
+    }
+    // Existing first (with counts), then unused numbered boxes
+    return [...existing, ...numeric];
+  }, [meds]);
+
   const groups = useMemo(() => {
     const map = new Map();
     meds.forEach((m) => {
@@ -548,6 +561,8 @@ export default function MedicineCabinet() {
             gap: 8px !important;
           }
           .med-batch-head > span:nth-child(2),
+          .med-batch-head > span:nth-child(3),
+          .med-batch-row > .med-batch-box,
           .med-batch-row > .med-batch-qty { grid-column: 1 / -1; padding-left: 0; color: #7A7A6E; }
           .med-detail-grid { gap: 12px !important; }
           .med-stat-card { flex: 1 1 auto; }
@@ -672,6 +687,16 @@ export default function MedicineCabinet() {
                   />
                   <span style={styles.settingsUnit}>or fewer</span>
                 </div>
+              </label>
+              <label style={{ ...styles.settingsLabel, flex: "1 1 240px" }}>
+                Miscellaneous box <span style={styles.optionalTag}>AI uses this for oddballs</span>
+                <input
+                  type="text"
+                  value={settings.miscBox}
+                  onChange={(e) => updateSettings({ miscBox: e.target.value })}
+                  placeholder='e.g. "Misc" or "30"'
+                  style={{ ...styles.settingsInput, width: "100%", fontFamily: "'Inter', sans-serif" }}
+                />
               </label>
             </div>
           </div>
@@ -836,23 +861,35 @@ export default function MedicineCabinet() {
                         }}>
                           {tagLabel(g.type)}
                         </span>
-                        {g.box && (
-                          <button
-                            type="button"
-                            className="med-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setBoxFilter(boxFilter === String(g.box) ? "" : String(g.box));
-                            }}
-                            style={{
-                              ...styles.boxTag,
-                              ...(boxFilter === String(g.box) ? styles.boxTagActive : {}),
-                            }}
-                            title={`Show only Box ${g.box}`}
-                          >
-                            📦 Box {g.box}
-                          </button>
-                        )}
+                        {(() => {
+                          const uniqueBoxes = [...new Set(g.batches.map((b) => b.box).filter(Boolean))];
+                          if (!uniqueBoxes.length) return null;
+                          if (uniqueBoxes.length === 1) {
+                            const b = uniqueBoxes[0];
+                            return (
+                              <button
+                                type="button"
+                                className="med-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setBoxFilter(boxFilter === String(b) ? "" : String(b));
+                                }}
+                                style={{
+                                  ...styles.boxTag,
+                                  ...(boxFilter === String(b) ? styles.boxTagActive : {}),
+                                }}
+                                title={`Show only Box ${b}`}
+                              >
+                                📦 Box {b}
+                              </button>
+                            );
+                          }
+                          return (
+                            <span style={styles.boxTag} title={`In ${uniqueBoxes.length} boxes`}>
+                              📦 {uniqueBoxes.length} boxes
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div style={styles.medMeta}>
                         <div style={styles.medMetaPrimary}>
@@ -890,6 +927,7 @@ export default function MedicineCabinet() {
                     <div style={styles.batchTable}>
                       <div className="med-batch-head" style={styles.batchHead}>
                         <span>Expires</span>
+                        <span>Box</span>
                         <span>Quantity</span>
                         <span></span>
                       </div>
@@ -903,6 +941,27 @@ export default function MedicineCabinet() {
                               <span style={{ ...styles.batchStatus, color: bt.fg, background: bt.bg }}>
                                 {bs.label}
                               </span>
+                            </span>
+                            <span className="med-batch-box" style={styles.batchBox}>
+                              {b.box ? (
+                                <button
+                                  type="button"
+                                  className="med-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setBoxFilter(boxFilter === String(b.box) ? "" : String(b.box));
+                                  }}
+                                  style={{
+                                    ...styles.batchBoxChip,
+                                    ...(boxFilter === String(b.box) ? styles.boxTagActive : {}),
+                                  }}
+                                  title={`Show only Box ${b.box}`}
+                                >
+                                  📦 {b.box}
+                                </button>
+                              ) : (
+                                <span style={styles.batchBoxEmpty}>—</span>
+                              )}
                             </span>
                             <span className="med-batch-qty" style={styles.batchQty}>
                               {b.quantity || "—"}
@@ -1131,17 +1190,19 @@ export default function MedicineCabinet() {
                 </label>
                 <label style={{ ...styles.label, flex: 1 }}>
                   Storage box <span style={styles.optionalTag}>Suggest picks</span>
-                  <select
-                    className="med-select"
+                  <input
+                    className="med-input"
+                    list="box-suggestions"
                     value={form.box || ""}
                     onChange={(e) => setForm({ ...form, box: e.target.value })}
+                    placeholder='e.g. "12" or "Top shelf"'
                     style={styles.formInput}
-                  >
-                    <option value="">Not assigned</option>
-                    {Array.from({ length: BOX_COUNT }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={String(n)}>Box {n}</option>
+                  />
+                  <datalist id="box-suggestions">
+                    {boxSuggestions.map((b) => (
+                      <option key={b} value={b} />
                     ))}
-                  </select>
+                  </datalist>
                 </label>
               </div>
               <button className="med-btn" type="submit" style={styles.submitBtn}>
@@ -1587,7 +1648,7 @@ const styles = {
   },
   batchHead: {
     display: "grid",
-    gridTemplateColumns: "1.6fr 1fr auto",
+    gridTemplateColumns: "1.4fr 0.9fr 0.9fr auto",
     gap: 10,
     padding: "8px 12px",
     background: "#F6F5F1",
@@ -1598,7 +1659,7 @@ const styles = {
   },
   batchRow: {
     display: "grid",
-    gridTemplateColumns: "1.6fr 1fr auto",
+    gridTemplateColumns: "1.4fr 0.9fr 0.9fr auto",
     gap: 10,
     padding: "10px 12px",
     borderTop: "1px solid #F1EEE3",
@@ -1622,6 +1683,24 @@ const styles = {
     fontSize: 13.5,
     fontFamily: "'IBM Plex Mono', monospace",
     color: "#3D3D34",
+  },
+  batchBox: { display: "flex", alignItems: "center" },
+  batchBoxChip: {
+    fontSize: 11.5,
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "#3D3D34",
+    background: "#F1EEE3",
+    border: "1px solid transparent",
+    padding: "3px 8px",
+    borderRadius: 20,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+  },
+  batchBoxEmpty: {
+    fontSize: 12,
+    color: "#B8B5A8",
   },
   batchVolume: {
     color: "#5C8A8E",

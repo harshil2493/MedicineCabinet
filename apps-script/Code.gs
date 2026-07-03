@@ -27,7 +27,7 @@ const HEADERS = [
 
 const SETTINGS_TAB = "settings";
 const SETTINGS_HEADERS = ["key", "value"];
-const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2 };
+const DEFAULT_SETTINGS = { expiryDays: 60, lowPill: 10, lowLiquid: 2, miscBox: "" };
 
 function doGet(e) {
   return json_({ error: "Use POST" });
@@ -161,6 +161,7 @@ function lookup_(name, strength, inventory) {
   var key = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!key) throw new Error("GEMINI_API_KEY not set — add it in Script Properties");
   if (!name) throw new Error("name required");
+  var miscBox = (readSettings_() || {}).miscBox || "";
 
   // Format inventory as "Box N: med1, med2" lines for prompt context.
   var inventoryText = "";
@@ -183,7 +184,11 @@ function lookup_(name, strength, inventory) {
     '- "volumeMl": typical bottle/vial volume in mL as a plain number string (e.g. "10", "60"). Only for non-drug types. Return empty string for "drug" or if unknown.\n' +
     '- "condition": short phrase (under 6 words) for what it is commonly used for (e.g. "Fever and mild pain" or "Bacterial infection")\n' +
     '- "description": 2-3 plain-language sentences on what it is, how it works, and general precautions.\n' +
-    '- "box": storage box number (1-30) as a plain string. Look at existing boxes: put this med in the SAME box as similar meds (same therapeutic category — pain relievers together, antibiotics together, GI meds together, eye drops together, etc.). If no similar meds exist yet, pick the lowest-numbered empty box. Return "" only if you truly cannot decide.\n' +
+    '- "box": which storage box this med goes in. Box labels can be numbers (e.g. "12") or short custom names (e.g. "Top shelf"). Placement priority:\n' +
+    '    (1) If any existing box already contains a med in the SAME therapeutic category (pain relievers together, antibiotics together, GI meds together, eye drops together, etc.), reuse that box\'s EXACT label.\n' +
+    (miscBox ? '    (2) Otherwise, if the med is a low-priority/rarely-used/uncategorizable item (vitamins, supplements, one-offs, general first aid), use the miscellaneous box: "' + miscBox + '".\n' : '') +
+    '    (' + (miscBox ? '3' : '2') + ') Otherwise, pick the lowest unused numeric label 1-30.\n' +
+    '    Return "" only if truly undecidable.\n' +
     'If you don\'t recognize the name, return type as "drug" and all other fields as empty strings.' +
     inventoryText;
 
