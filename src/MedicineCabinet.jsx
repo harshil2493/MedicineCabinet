@@ -419,7 +419,7 @@ export default function MedicineCabinet() {
           groupKey: gKey,
           rank: 0,
           icon: "expired",
-          text: `${m.name} expired ${Math.abs(status.d)}d ago — safe to discard, ask Dad for a fresh one`,
+          text: `${m.name} expired ${Math.abs(status.d)}d ago — safe to discard`,
         });
       } else if (status.tone === "soon") {
         items.push({
