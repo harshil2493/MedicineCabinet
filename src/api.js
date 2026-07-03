@@ -81,8 +81,8 @@ export function replaceMedicines(medicines) {
   return post("replace", { medicines });
 }
 
-export function lookupMedicine(name, strength) {
-  return post("lookup", { name, strength });
+export function lookupMedicine(name, strength, inventory) {
+  return post("lookup", { name, strength, inventory });
 }
 
 export function getSettings() {

@@ -11,8 +11,10 @@ function lowThresholdFor(type, settings) {
 
 const EXPORT_COLUMNS = [
   "name", "type", "strength", "dosage", "quantity", "volumeMl",
-  "condition", "description", "expiryDate",
+  "condition", "description", "expiryDate", "box",
 ];
+
+const BOX_COUNT = 30;
 
 function isLiquidType(t) {
   return t && t !== "drug";
@@ -62,6 +64,7 @@ function makeEmpty() {
     condition: "",
     description: "",
     expiryDate: `${y}-${m}`,
+    box: "",
   };
 }
 
@@ -208,6 +211,7 @@ export default function MedicineCabinet() {
   const [showSettings, setShowSettings] = useState(false);
   const [viewFilter, setViewFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("");
+  const [boxFilter, setBoxFilter] = useState("");
   const canEdit = getRole() !== "reader";
   const username = getUsername();
 
@@ -272,8 +276,17 @@ export default function MedicineCabinet() {
     setLookingUp(true);
     setLookupError("");
     try {
-      const parsed = await apiLookup(form.name.trim(), form.strength.trim());
-      if (!parsed.condition && !parsed.description && !parsed.dosage && !parsed.strength) {
+      // Build a per-box inventory summary so Gemini can group meds with similar existing ones
+      const inventory = {};
+      meds.forEach((m) => {
+        if (!m.box) return;
+        const label = [m.name, m.strength].filter(Boolean).join(" ").trim();
+        if (!label) return;
+        if (!inventory[m.box]) inventory[m.box] = [];
+        if (!inventory[m.box].includes(label)) inventory[m.box].push(label);
+      });
+      const parsed = await apiLookup(form.name.trim(), form.strength.trim(), inventory);
+      if (!parsed.condition && !parsed.description && !parsed.dosage && !parsed.strength && !parsed.box) {
         setLookupError("Couldn't find that one — try the generic name, or fill it in yourself.");
       } else {
         setForm((f) => ({
@@ -284,6 +297,7 @@ export default function MedicineCabinet() {
           volumeMl: parsed.volumeMl || f.volumeMl,
           condition: parsed.condition || f.condition,
           description: parsed.description || f.description,
+          box: parsed.box || f.box,
         }));
       }
     } catch (e) {
@@ -426,6 +440,7 @@ export default function MedicineCabinet() {
           condition: "",
           description: "",
           dosage: "",
+          box: "",
           batches: [],
         });
       }
@@ -434,6 +449,7 @@ export default function MedicineCabinet() {
       if (!g.condition && m.condition) g.condition = m.condition;
       if (!g.description && m.description) g.description = m.description;
       if (!g.dosage && m.dosage) g.dosage = m.dosage;
+      if (!g.box && m.box) g.box = m.box;
     });
     // Sort batches within each group by expiry (earliest first, blanks last)
     map.forEach((g) => {
@@ -462,6 +478,9 @@ export default function MedicineCabinet() {
     if (typeFilter) {
       list = list.filter((g) => g.type === typeFilter);
     }
+    if (boxFilter) {
+      list = list.filter((g) => String(g.box) === String(boxFilter));
+    }
     const totalQty = (g) => g.batches.reduce((s, b) => {
       const q = parseQuantity(b.quantity);
       return q ? s + q.num : s;
@@ -478,7 +497,7 @@ export default function MedicineCabinet() {
       list = [...list].sort((a, b) => a.name.localeCompare(b.name));
     }
     return list;
-  }, [groups, query, sortMode, viewFilter, typeFilter, attentionIds]);
+  }, [groups, query, sortMode, viewFilter, typeFilter, boxFilter, attentionIds]);
 
   const typeCounts = useMemo(() => {
     const counts = {};
@@ -748,6 +767,15 @@ export default function MedicineCabinet() {
         </div>
       )}
 
+      {boxFilter && (
+        <div style={styles.boxFilterBanner}>
+          <span>📦 Showing Box {boxFilter}</span>
+          <button type="button" className="med-btn" onClick={() => setBoxFilter("")} style={styles.boxFilterClear}>
+            Show all
+          </button>
+        </div>
+      )}
+
       {error && <div style={styles.errorBanner}>{error}</div>}
 
       <main style={styles.list}>
@@ -808,6 +836,23 @@ export default function MedicineCabinet() {
                         }}>
                           {tagLabel(g.type)}
                         </span>
+                        {g.box && (
+                          <button
+                            type="button"
+                            className="med-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBoxFilter(boxFilter === String(g.box) ? "" : String(g.box));
+                            }}
+                            style={{
+                              ...styles.boxTag,
+                              ...(boxFilter === String(g.box) ? styles.boxTagActive : {}),
+                            }}
+                            title={`Show only Box ${g.box}`}
+                          >
+                            📦 Box {g.box}
+                          </button>
+                        )}
                       </div>
                       <div style={styles.medMeta}>
                         <div style={styles.medMetaPrimary}>
@@ -1070,19 +1115,35 @@ export default function MedicineCabinet() {
                   rows={6}
                 />
               </label>
-              <label style={styles.label}>
-                Expiry (month/year)
-                <input
-                  className="med-input"
-                  type="month"
-                  value={(() => {
-                    const ym = parseYearMonth(form.expiryDate);
-                    return ym ? `${ym.y}-${String(ym.m).padStart(2, "0")}` : "";
-                  })()}
-                  onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
-                  style={styles.formInput}
-                />
-              </label>
+              <div className="med-form-row" style={styles.formRow}>
+                <label style={{ ...styles.label, flex: 1 }}>
+                  Expiry (month/year)
+                  <input
+                    className="med-input"
+                    type="month"
+                    value={(() => {
+                      const ym = parseYearMonth(form.expiryDate);
+                      return ym ? `${ym.y}-${String(ym.m).padStart(2, "0")}` : "";
+                    })()}
+                    onChange={(e) => setForm({ ...form, expiryDate: e.target.value })}
+                    style={styles.formInput}
+                  />
+                </label>
+                <label style={{ ...styles.label, flex: 1 }}>
+                  Storage box <span style={styles.optionalTag}>Suggest picks</span>
+                  <select
+                    className="med-select"
+                    value={form.box || ""}
+                    onChange={(e) => setForm({ ...form, box: e.target.value })}
+                    style={styles.formInput}
+                  >
+                    <option value="">Not assigned</option>
+                    {Array.from({ length: BOX_COUNT }, (_, i) => i + 1).map((n) => (
+                      <option key={n} value={String(n)}>Box {n}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <button className="med-btn" type="submit" style={styles.submitBtn}>
                 {editingId ? "Save changes" : "Add to cabinet"}
               </button>
@@ -1413,6 +1474,48 @@ const styles = {
     background: "#EAF1F1",
     padding: "2px 7px",
     borderRadius: 20,
+  },
+  boxTag: {
+    fontSize: 10.5,
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "#3D3D34",
+    background: "#F1EEE3",
+    border: "1px solid transparent",
+    padding: "2px 8px",
+    borderRadius: 20,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+  },
+  boxTagActive: {
+    background: "#EAF1F1",
+    border: "1px solid #2D6A6E",
+    color: "#2D6A6E",
+    fontWeight: 500,
+  },
+  boxFilterBanner: {
+    maxWidth: 720,
+    margin: "12px auto 0",
+    padding: "8px 14px",
+    background: "#EAF1F1",
+    border: "1px solid #2D6A6E",
+    borderRadius: 10,
+    fontSize: 13,
+    color: "#2D6A6E",
+    fontWeight: 500,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  boxFilterClear: {
+    background: "transparent",
+    border: "none",
+    color: "#2D6A6E",
+    fontSize: 12.5,
+    cursor: "pointer",
+    textDecoration: "underline",
+    fontFamily: "'Inter', sans-serif",
   },
   medDosage: {
     display: "block",

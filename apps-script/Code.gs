@@ -22,7 +22,7 @@
 const HEADERS = [
   "id", "name", "type", "strength", "dosage",
   "quantity", "condition", "description", "purchaseDate", "expiryDate",
-  "volumeMl",
+  "volumeMl", "box",
 ];
 
 const SETTINGS_TAB = "settings";
@@ -48,7 +48,7 @@ function doPost(e) {
       replaceAll_(body.medicines || []);
       out = { ok: true, count: body.medicines.length };
     }
-    else if (body.action === "lookup") out = lookup_(body.name, body.strength);
+    else if (body.action === "lookup") out = lookup_(body.name, body.strength, body.inventory);
     else if (body.action === "get_settings") out = { settings: readSettings_() };
     else if (body.action === "save_settings") {
       writeSettings_(body.settings || {});
@@ -157,22 +157,35 @@ function authorizeExternalRequest() {
   Logger.log("External request scope authorized.");
 }
 
-function lookup_(name, strength) {
+function lookup_(name, strength, inventory) {
   var key = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
   if (!key) throw new Error("GEMINI_API_KEY not set — add it in Script Properties");
   if (!name) throw new Error("name required");
 
+  // Format inventory as "Box N: med1, med2" lines for prompt context.
+  var inventoryText = "";
+  if (inventory && typeof inventory === "object") {
+    var lines = [];
+    Object.keys(inventory).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (box) {
+      var meds = inventory[box];
+      if (meds && meds.length) lines.push("Box " + box + ": " + meds.join(", "));
+    });
+    if (lines.length) inventoryText = "\n\nCurrent storage boxes:\n" + lines.join("\n");
+  }
+
   var prompt =
     'For the medicine "' + name + '"' +
     (strength ? ' (' + strength + ')' : '') +
-    ', return JSON with exactly six fields:\n' +
+    ', return JSON with exactly seven fields:\n' +
     '- "type": one of "drug", "liquid_oral", "injection", "eye_drops", "ear_drops", "cream", "powder". Pick "drug" for tablets/capsules/pills. Pick "cream" for topical creams, ointments, gels, balms. Pick "powder" for oral rehydration salts, protein powders, powder sachets.\n' +
     '- "strength": most common strength/concentration if inferable from the name (e.g. "500 mg", "5 mg/mL"). Empty string if already in the name or unknown.\n' +
     '- "dosage": typical adult dosage with timing/frequency (e.g. "1 tablet twice daily, after meals" or "10 ml at bedtime"). Use plain English. If dosage varies widely, give the most common adult regimen.\n' +
     '- "volumeMl": typical bottle/vial volume in mL as a plain number string (e.g. "10", "60"). Only for non-drug types. Return empty string for "drug" or if unknown.\n' +
     '- "condition": short phrase (under 6 words) for what it is commonly used for (e.g. "Fever and mild pain" or "Bacterial infection")\n' +
     '- "description": 2-3 plain-language sentences on what it is, how it works, and general precautions.\n' +
-    'If you don\'t recognize the name, return type as "drug" and all other fields as empty strings.';
+    '- "box": storage box number (1-30) as a plain string. Look at existing boxes: put this med in the SAME box as similar meds (same therapeutic category — pain relievers together, antibiotics together, GI meds together, eye drops together, etc.). If no similar meds exist yet, pick the lowest-numbered empty box. Return "" only if you truly cannot decide.\n' +
+    'If you don\'t recognize the name, return type as "drug" and all other fields as empty strings.' +
+    inventoryText;
 
   var url =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" +
@@ -191,8 +204,9 @@ function lookup_(name, strength) {
           volumeMl: { type: "STRING" },
           condition: { type: "STRING" },
           description: { type: "STRING" },
+          box: { type: "STRING" },
         },
-        required: ["type", "strength", "dosage", "volumeMl", "condition", "description"],
+        required: ["type", "strength", "dosage", "volumeMl", "condition", "description", "box"],
       },
     },
   };
@@ -213,7 +227,7 @@ function lookup_(name, strength) {
   var text = ((data.candidates || [])[0]?.content?.parts || [])
     .map(function (p) { return p.text || ""; })
     .join("");
-  if (!text) return { type: "drug", strength: "", dosage: "", volumeMl: "", condition: "", description: "" };
+  if (!text) return { type: "drug", strength: "", dosage: "", volumeMl: "", condition: "", description: "", box: "" };
   return JSON.parse(text);
 }
 
